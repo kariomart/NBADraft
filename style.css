@@ -773,8 +773,8 @@ input, select { font-family: inherit; }
 }
 
 /* Position layout (% of court) */
-.slot-c  { top: 8%;  left: 50%; transform: translateX(-50%); }
-.slot-pf { top: 8%;  right: 8%; }
+.slot-c  { top: 8%; left: calc(50% - 78px); }
+.slot-pf { top: 8%; left: calc(50% + 8px); }
 .slot-sf { top: 45%; left: 6%; }
 .slot-pg { bottom: 10%; left: 50%; transform: translateX(-50%); }
 .slot-sg { top: 45%; right: 6%; }
