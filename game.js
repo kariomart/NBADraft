@@ -6,6 +6,7 @@ const state = {
   totalRounds: 5,
   roster: { PG: null, SG: null, SF: null, PF: null, C: null },
   currentTeam: null,
+  currentEra: null,       // the era the wheel landed on this round
   spinning: false,
   phase: 'setup',
   posFilter: 'All',
@@ -158,10 +159,17 @@ function renderDraftScreen() {
       <div class="draft-body">
         <div class="left-panel">
           <div class="wheel-area" id="wheelArea">
-            <div class="wheel-spinner" id="wheelSpinner">
-              <div id="wheelLabel">Spinning...</div>
+            <div class="dials">
+              <div class="dial">
+                <div class="dial-spinner" id="teamSpinner"><div id="teamLabel">—</div></div>
+                <div class="dial-cap">TEAM</div>
+              </div>
+              <div class="dial-x">×</div>
+              <div class="dial">
+                <div class="dial-spinner era" id="eraSpinner"><div id="eraLabel">—</div></div>
+                <div class="dial-cap">ERA</div>
+              </div>
             </div>
-            <button class="spin-btn" id="spinBtn" onclick="spinWheel()" disabled>Spin</button>
           </div>
           <div class="player-list-area" id="playerListArea" style="display:none">
             <div class="list-controls">
@@ -354,57 +362,79 @@ function flashInvalid(pos) {
   el.addEventListener('animationend', () => el.classList.remove('flash-invalid'), { once: true });
 }
 
-// ── Wheel Spin ────────────────────────────────────────────────────────────────
+// Eras the wheel can land on: the selected tags, or a single custom range.
+function activeEras() {
+  if (state.selectedEras.length) {
+    return ERAS.filter(e => state.selectedEras.includes(e.key));
+  }
+  return [{ key: 'custom', label: `${state.yearFrom}–${state.yearTo}`,
+            from: state.yearFrom, to: state.yearTo }];
+}
+
+// ── Wheel Spin (team dial × era dial) ──────────────────────────────────────────
 function spinWheel() {
   if (state.spinning) return;
   state.spinning = true;
 
-  const label = document.getElementById('wheelLabel');
-  const spinner = document.getElementById('wheelSpinner');
-  const spinBtn = document.getElementById('spinBtn');
-  if (spinBtn) spinBtn.disabled = true;
+  const teamLabel = document.getElementById('teamLabel');
+  const eraLabel = document.getElementById('eraLabel');
+  const teamSpinner = document.getElementById('teamSpinner');
+  const eraSpinner = document.getElementById('eraSpinner');
 
-  const available = TEAMS.filter(t => !state.usedTeams.includes(t.id));
-  if (!available.length) { endGame(); return; }
+  const availableTeams = TEAMS.filter(t => !state.usedTeams.includes(t.id));
+  const eras = activeEras();
+
+  // Only land on (team, era) combos that actually have eligible players.
+  const combos = [];
+  availableTeams.forEach(t => eras.forEach(e => {
+    if (getPlayersForTeam(t.id, e.from, e.to).length > 0) combos.push({ team: t, era: e });
+  }));
+  if (!combos.length) { endGame(); return; }
+
+  const chosen = combos[Math.floor(Math.random() * combos.length)];
 
   let ticks = 0;
   const total = 20 + Math.floor(Math.random() * 15);
-  let idx = 0;
-
-  spinner.classList.add('spinning');
+  teamSpinner.classList.add('spinning');
+  eraSpinner.classList.add('spinning');
 
   const interval = setInterval(() => {
-    idx = Math.floor(Math.random() * available.length);
-    label.textContent = available[idx].id;
+    teamLabel.textContent = availableTeams[Math.floor(Math.random() * availableTeams.length)].id;
+    eraLabel.textContent = eras[Math.floor(Math.random() * eras.length)].label;
     ticks++;
     if (ticks >= total) {
       clearInterval(interval);
-      spinner.classList.remove('spinning');
-      const chosen = available[idx];
-      state.currentTeam = chosen;
-      state.usedTeams.push(chosen.id);
-      label.textContent = chosen.id;
-      spinner.style.background = chosen.color + '22';
-      spinner.style.borderColor = chosen.color;
+      teamSpinner.classList.remove('spinning');
+      eraSpinner.classList.remove('spinning');
+
+      state.currentTeam = chosen.team;
+      state.currentEra = chosen.era;
+      state.usedTeams.push(chosen.team.id);
+
+      teamLabel.textContent = chosen.team.id;
+      eraLabel.textContent = chosen.era.label;
+      teamSpinner.style.background = chosen.team.color + '22';
+      teamSpinner.style.borderColor = chosen.team.color;
+
       state.spinning = false;
-      showPlayerPicker(chosen);
+      showPlayerPicker(chosen.team, chosen.era);
     }
   }, 80);
 }
 
 // ── Player Picker ─────────────────────────────────────────────────────────────
-function showPlayerPicker(team) {
+function showPlayerPicker(team, era) {
   state.phase = 'pick';
   const listArea = document.getElementById('playerListArea');
   if (!listArea) return;
   listArea.style.display = 'flex';
 
-  // Team name banner (insert before list-controls)
+  // Team + era banner (insert before list-controls)
   const existing = listArea.querySelector('.team-name-banner');
   if (existing) existing.remove();
   const banner = document.createElement('div');
   banner.className = 'team-name-banner';
-  banner.textContent = team.name;
+  banner.innerHTML = `${team.name} <span class="banner-era">${era.label}</span>`;
   banner.style.color = team.color;
   listArea.insertBefore(banner, listArea.firstChild);
 
@@ -413,7 +443,8 @@ function showPlayerPicker(team) {
 
 function renderPlayerList() {
   const team = state.currentTeam;
-  const allPlayers = getPlayersForTeam(team.id, state.yearFrom, state.yearTo);
+  const era = state.currentEra;
+  const allPlayers = getPlayersForTeam(team.id, era.from, era.to);
 
   let filtered = allPlayers;
   if (state.posFilter !== 'All') {

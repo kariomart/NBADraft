@@ -308,6 +308,56 @@ input, select { font-family: inherit; }
   100% { transform: scale(1); }
 }
 
+/* Team × Era dials */
+.dials {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 12px;
+}
+
+.dial {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.dial-spinner {
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  background: var(--surface2);
+  border: 3px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 6px;
+  font-size: 17px;
+  font-weight: 900;
+  letter-spacing: -0.5px;
+  line-height: 1.05;
+  transition: background 0.3s, border-color 0.3s;
+}
+
+.dial-spinner.era { font-size: 15px; }
+.dial-spinner.spinning { animation: spin-pulse 0.08s linear infinite; }
+
+.dial-cap {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--text-muted);
+}
+
+.dial-x {
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--text-muted);
+  margin-top: 36px;
+}
+
 .spin-btn {
   padding: 10px 28px;
   background: var(--accent);
@@ -342,6 +392,18 @@ input, select { font-family: inherit; }
   font-weight: 800;
   margin-bottom: 8px;
   letter-spacing: -0.3px;
+}
+
+.banner-era {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: rgba(139, 92, 246, 0.15);
+  color: var(--accent2);
+  font-size: 11px;
+  font-weight: 700;
+  vertical-align: middle;
 }
 
 .list-controls {
