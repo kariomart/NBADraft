@@ -397,7 +397,7 @@ function spinWheel() {
   // Only land on (team, era) combos that actually have eligible players.
   const combos = [];
   availableTeams.forEach(t => eras.forEach(e => {
-    if (getPlayersForTeam(t.id, e.from, e.to).length > 0) combos.push({ team: t, era: e });
+    if (getPlayersForTeam(t.id, e.from, e.to).length >= 5) combos.push({ team: t, era: e });
   }));
   if (!combos.length) { endGame(); return; }
 
@@ -487,7 +487,7 @@ function rerollDial(which) {
     const freshTeams = TEAMS.filter(t =>
       !state.usedTeams.includes(t.id) &&
       t.id !== state.currentTeam.id &&
-      getPlayersForTeam(t.id, state.currentEra.from, state.currentEra.to).length > 0
+      getPlayersForTeam(t.id, state.currentEra.from, state.currentEra.to).length >= 5
     );
     if (!freshTeams.length) { state.spinning = false; updateRerollButtons(); return; }
     newTeam = freshTeams[Math.floor(Math.random() * freshTeams.length)];
@@ -496,7 +496,7 @@ function rerollDial(which) {
     state.rerollEra--;
     const freshEras = eras.filter(e =>
       e.key !== state.currentEra.key &&
-      getPlayersForTeam(state.currentTeam.id, e.from, e.to).length > 0
+      getPlayersForTeam(state.currentTeam.id, e.from, e.to).length >= 5
     );
     if (!freshEras.length) { state.spinning = false; updateRerollButtons(); return; }
     newEra = freshEras[Math.floor(Math.random() * freshEras.length)];

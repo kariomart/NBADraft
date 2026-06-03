@@ -70,9 +70,9 @@ POS_MAP = {
 
 # Minimum bar to be included (peak-season filter). Low enough to capture solid
 # rotation/role players, not just stars.
-MIN_PPG   = 4.0   # peak PPG threshold
-MIN_GP    = 15    # games played per qualifying season
-MIN_MPG   = 8     # minutes per game per qualifying season
+MIN_PPG   = 3.0   # peak PPG threshold
+MIN_GP    = 10    # games played per qualifying season
+MIN_MPG   = 5     # minutes per game per qualifying season
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
