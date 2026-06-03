@@ -676,6 +676,7 @@ function endGame() {
   if (state.challenge) { renderHeadToHead(ev); return; }
 
   const gradeColor = MODEL.gradeColor(ev.grade);
+  const arch = teamArchetype(ev, state.roster);
   const shareCode = encodeTeam(state.roster, '');
 
   const subCards = [
@@ -725,6 +726,8 @@ function endGame() {
       <div class="result-hero">
         <div class="hero-left">
           <h1>Your Team</h1>
+          <div class="result-archetype">${arch.label}</div>
+          <div class="result-archetype-desc">${arch.desc}</div>
           <div class="record-badge">
             <span class="record-wins">${ev.wins}</span>
             <span class="record-dash">-</span>
@@ -888,6 +891,59 @@ function clearChallenge() {
   renderSetup();
 }
 
+// ── Team archetype classifier ────────────────────────────────────────────────
+function teamArchetype(ev, roster) {
+  const slots = ['PG', 'SG', 'SF', 'PF', 'C'];
+  const players = slots.map(p => roster[p]).filter(Boolean);
+  if (!players.length) return { label: 'Empty Gym', desc: 'Nobody showed up to practice.' };
+
+  const maxPER     = Math.max(...players.map(p => p.per));
+  const avgPER     = players.reduce((s, p) => s + p.per, 0) / players.length;
+  const sumSPG     = players.reduce((s, p) => s + p.stats.spg, 0);
+  const sumBPG     = players.reduce((s, p) => s + p.stats.bpg, 0);
+  const sumAPG     = players.reduce((s, p) => s + p.stats.apg, 0);
+  const avgTS      = players.reduce((s, p) => s + p.ts, 0) / players.length;
+  const superstars = players.filter(p => p.per >= 26).length;
+  const allStars   = players.filter(p => p.per >= 21).length;
+  const defenders  = players.filter(p => (p.stats.spg + p.stats.bpg) >= 2.0).length;
+  const heavyBalls = players.filter(p => p.stats.ppg + 0.6 * p.stats.apg >= 24).length;
+
+  const offS = ev.sub.offense.score;
+  const defS = ev.sub.defense.score;
+  const balS = ev.sub.balance.score;
+  const rebS = ev.sub.rebounding.score;
+
+  if (superstars >= 3 && avgPER >= 25)
+    return { label: 'All-Time GOAT Five', desc: 'Three or more all-time legends — a historically dominant lineup that may never exist again.' };
+  if (superstars >= 2 && ev.wins >= 60)
+    return { label: 'Superteam', desc: 'Multiple bonafide stars gravitating toward rings. History has mixed feelings about this.' };
+  if (heavyBalls >= 3 && superstars >= 1)
+    return { label: 'Ball-Dominant All-Stars', desc: 'Elite on paper, chaotic in practice — who gets the rock in crunch time?' };
+  if (allStars >= 4)
+    return { label: 'Star-Studded Lineup', desc: 'Loaded top to bottom with All-Star caliber talent. Scary on paper.' };
+  if (defS >= 82 && offS <= 42)
+    return { label: 'Grit & Grind', desc: 'Wins the ugly ones. Your coach has a whiteboard full of coverages and zero interest in your feelings.' };
+  if (defS >= 72 && (sumBPG + sumSPG) >= 8)
+    return { label: 'Defensive Juggernaut', desc: 'Suffocating, physical, and deeply unpleasant to play against.' };
+  if (offS >= 80 && avgTS >= 58)
+    return { label: 'Pace & Space', desc: 'Spreading the floor and firing threes — the modern offensive nightmare.' };
+  if (sumAPG >= 22 && offS >= 68)
+    return { label: 'Ball Movement Clinic', desc: 'Unselfish, fluid, and devastating. Every possession ends with the right shot.' };
+  if (defenders >= 3 && defS >= 65)
+    return { label: 'Two-Way Grit Squad', desc: 'Tough on both ends. Nobody on this roster takes a possession off.' };
+  if (rebS >= 78)
+    return { label: 'Glass Eaters', desc: 'Every missed shot belongs to them. Second chances are a way of life.' };
+  if (ev.wins >= 50 && balS >= 70)
+    return { label: 'Well-Oiled Machine', desc: 'No weak links, no ego clashes. Just basketball the right way.' };
+  if (maxPER >= 21 && allStars === 1)
+    return { label: 'One Star & Four Soldiers', desc: 'One franchise player, four role players ready to run through a wall for him.' };
+  if (allStars === 0 && balS >= 65)
+    return { label: 'Glue Guy Collective', desc: 'No names, all game. Underrated, overachieving, perpetually disrespected.' };
+  if (ev.wins <= 28)
+    return { label: 'Process Believers', desc: 'Trust the process. Playoff odds: slim. Character-building: guaranteed.' };
+  return { label: 'Solid Starting Five', desc: 'A dependable, no-frills lineup that can hang with anyone on a good night.' };
+}
+
 // ── Head-to-head result ─────────────────────────────────────────────────────
 function renderHeadToHead(evMine) {
   const evOpp = MODEL.evaluateTeam(state.challenge.roster);
@@ -901,22 +957,46 @@ function renderHeadToHead(evMine) {
   const myGamePct = Math.round(series.pGameA * 100);
   const myBarPct = Math.round(series.pSeriesA * 100);
 
-  const teamColumn = (ev, label, isMe) => {
+  const teamColumn = (ev, label, isMe, roster) => {
     const gc = MODEL.gradeColor(ev.grade);
-    const roster = ev.contributions.map(c => `
+    const arch = teamArchetype(ev, roster);
+    const net = ev.netRtg >= 0 ? '+' + ev.netRtg : ev.netRtg;
+
+    const subGrades = [
+      ['OFF', ev.sub.offense],
+      ['DEF', ev.sub.defense],
+      ['PLAY', ev.sub.playmaking],
+      ['STAR', ev.sub.starPower],
+    ].map(([lbl, s]) =>
+      `<span class="h2h-sg" style="color:${MODEL.gradeColor(s.grade)}">${lbl} ${s.grade}</span>`
+    ).join('');
+
+    const playerRows = ev.contributions.map(c => `
       <div class="h2h-player">
         <span class="h2h-pos">${c.pos}</span>
-        <span class="h2h-name">${c.player ? c.player.name : '—'}</span>
-        <span class="h2h-ws">${c.ws}</span>
+        <span class="h2h-name-block">
+          <span class="h2h-name">${c.player ? c.player.name : '—'}</span>
+          ${c.player ? `<span class="h2h-stats">${c.player.stats.ppg}p &middot; ${c.player.per.toFixed(1)} PER</span>` : ''}
+        </span>
+        <span class="h2h-ws">${c.ws} WS</span>
       </div>`).join('');
+
     return `
       <div class="h2h-team ${isMe ? 'me' : 'opp'}">
         <div class="h2h-team-head">
           <div class="h2h-team-name">${label}</div>
           <div class="h2h-grade" style="color:${gc}">${ev.grade}</div>
         </div>
-        <div class="h2h-record">${ev.wins}-${ev.losses} · Net ${ev.netRtg >= 0 ? '+' : ''}${ev.netRtg}</div>
-        <div class="h2h-roster">${roster}</div>
+        <div class="h2h-record">${ev.wins}–${ev.losses}</div>
+        <div class="h2h-archetype">${arch.label}</div>
+        <div class="h2h-archetype-desc">${arch.desc}</div>
+        <div class="h2h-ratings">
+          <span class="h2h-pill">OFF ${ev.ortg}</span>
+          <span class="h2h-pill">DEF ${ev.drtg}</span>
+          <span class="h2h-pill net">NET ${net}</span>
+        </div>
+        <div class="h2h-subgrades">${subGrades}</div>
+        <div class="h2h-roster">${playerRows}</div>
       </div>`;
   };
 
@@ -934,9 +1014,9 @@ function renderHeadToHead(evMine) {
       </div>
 
       <div class="h2h-grid">
-        ${teamColumn(evMine, myName, true)}
+        ${teamColumn(evMine, myName, true, state.roster)}
         <div class="h2h-vs">VS</div>
-        ${teamColumn(evOpp, oppName, false)}
+        ${teamColumn(evOpp, oppName, false, state.challenge.roster)}
       </div>
 
       <div class="result-actions">
