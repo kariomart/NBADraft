@@ -35,6 +35,16 @@ const drag = { type: null, playerId: null, fromPos: null };
 
 // ── Init ─────────────────────────────────────────────────────────────────────
 function init() {
+  // Auto-load a challenge if the page was opened from a share link (?c=…).
+  const code = new URLSearchParams(location.search).get('c');
+  if (code) {
+    const dec = decodeTeam(code);
+    if (dec) {
+      applyChallenge(dec);
+      // Clean the URL so a refresh/re-share doesn't re-trigger or grow.
+      history.replaceState(null, '', location.pathname);
+    }
+  }
   renderSetup();
 }
 
@@ -53,7 +63,7 @@ function renderSetup() {
       ${locked ? `
       <div class="challenge-banner">
         <div class="challenge-banner-main">⚔️ Challenge from <strong>${state.challenge.name}</strong></div>
-        <div class="challenge-banner-sub">Era locked to ${state.yearFrom}–${state.yearTo} · draft your five, then face their team in a 7-game series.</div>
+        <div class="challenge-banner-sub">Era locked to ${state.yearFrom}–${state.yearTo}${state.ballKnowledge ? ' · 🧠 Ball Knowledge ON' : ''} · draft your five, then face their team in a 7-game series.</div>
         <button class="btn-ghost" onclick="clearChallenge()">Cancel challenge</button>
       </div>` : ''}
 
@@ -73,11 +83,11 @@ function renderSetup() {
         ${ERAS.map(e => `<button class="preset-btn ${state.selectedEras.includes(e.key) ? 'active' : ''}" ${locked ? '' : `onclick="toggleEra('${e.key}')"`}>${e.label}</button>`).join('')}
       </div>
 
-      <button class="mode-toggle ${state.ballKnowledge ? 'on' : ''}" id="bkToggle" onclick="toggleBallKnowledge()">
+      <button class="mode-toggle ${state.ballKnowledge ? 'on' : ''} ${locked ? 'locked' : ''}" id="bkToggle" ${locked ? '' : 'onclick="toggleBallKnowledge()"'}>
         <span class="mode-toggle-switch"><span class="mode-toggle-knob"></span></span>
         <span class="mode-toggle-text">
           <span class="mode-toggle-title">🧠 Ball Knowledge Mode</span>
-          <span class="mode-toggle-sub">Stats hidden while drafting — pick on name & gut alone</span>
+          <span class="mode-toggle-sub">${locked ? 'Locked by challenge to match your opponent' : 'Stats hidden while drafting — pick on name & gut alone'}</span>
         </span>
       </button>
 
@@ -625,12 +635,13 @@ function endGame() {
 
       <div class="result-col share-block">
         <div class="col-title">⚔️ Challenge a Friend</div>
-        <p class="share-sub">Send this code. They draft in the same era (${state.yearFrom}–${state.yearTo}), then we sim a 7-game series between your teams.</p>
+        <p class="share-sub">Send this link. They draft in the same era (${state.yearFrom}–${state.yearTo})${state.ballKnowledge ? ' with Ball Knowledge mode on' : ''}, then we sim a 7-game series between your teams.</p>
         <input id="challengerName" class="share-name" placeholder="Your name (optional)" maxlength="24" oninput="refreshShareCode()">
         <div class="share-code-row">
-          <input id="shareCode" class="share-code" readonly value="${shareCode}">
-          <button class="btn-ghost" id="copyBtn" onclick="copyShareCode()">Copy</button>
+          <input id="shareLink" class="share-code" readonly value="${buildShareURL(shareCode)}">
+          <button class="btn-ghost" id="copyLinkBtn" onclick="copyShare('link')">Copy Link</button>
         </div>
+        <button class="share-altcopy" id="copyCodeBtn" onclick="copyShare('code')">Copy raw code instead</button>
       </div>
 
       <div class="result-actions">
@@ -654,17 +665,30 @@ function b64urlDecode(s) {
   return decodeURIComponent(escape(atob(s)));
 }
 
-// Pack a roster + era into a shareable code.
+// Pack a roster + era + mode into a shareable code.
 function encodeTeam(roster, name) {
   const payload = {
     v: 1,
     n: (name || '').slice(0, 24),
     f: state.yearFrom, t: state.yearTo,
     e: state.selectedEras.slice(),
+    b: state.ballKnowledge ? 1 : 0,                      // ball-knowledge mode
     dv: PLAYERS.length,                                  // dataset size (soft check)
     p: FILL_ORDER.map(pos => (roster[pos] ? roster[pos].id : 0)),
   };
   return b64urlEncode(JSON.stringify(payload));
+}
+
+// Full shareable URL carrying the challenge code in a ?c= param.
+function buildShareURL(code) {
+  return `${location.origin}${location.pathname}?c=${code}`;
+}
+
+// Accept either a raw code or a pasted share link, and return the code.
+function extractCode(input) {
+  const s = (input || '').trim();
+  const m = s.match(/[?&#]c=([^&\s]+)/);
+  return m ? m[1] : s;
 }
 
 // Decode a code back into { payload, roster, missing }.
@@ -687,33 +711,46 @@ function decodeTeam(code) {
 
 function refreshShareCode() {
   const name = document.getElementById('challengerName').value;
-  document.getElementById('shareCode').value = encodeTeam(state.roster, name);
+  const code = encodeTeam(state.roster, name);
+  document.getElementById('shareLink').value = buildShareURL(code);
 }
 
-function copyShareCode() {
-  const field = document.getElementById('shareCode');
-  field.select();
-  navigator.clipboard?.writeText(field.value);
-  const btn = document.getElementById('copyBtn');
-  if (btn) { btn.textContent = 'Copied!'; setTimeout(() => { btn.textContent = 'Copy'; }, 1500); }
+// kind: 'link' (full URL) or 'code' (raw code only)
+function copyShare(kind) {
+  const name = document.getElementById('challengerName').value;
+  const code = encodeTeam(state.roster, name);
+  const text = kind === 'link' ? buildShareURL(code) : code;
+  navigator.clipboard?.writeText(text);
+  const btn = document.getElementById(kind === 'link' ? 'copyLinkBtn' : 'copyCodeBtn');
+  if (btn) {
+    const orig = btn.textContent;
+    btn.textContent = 'Copied!';
+    setTimeout(() => { btn.textContent = orig; }, 1500);
+  }
+}
+
+// Apply a decoded challenge to state (era + mode are locked to the opponent's).
+function applyChallenge(dec) {
+  state.challenge = { name: dec.payload.n || 'Challenger', roster: dec.roster, payload: dec.payload };
+  state.yearFrom = dec.payload.f;
+  state.yearTo = dec.payload.t;
+  state.selectedEras = Array.isArray(dec.payload.e) ? dec.payload.e : [];
+  state.ballKnowledge = !!dec.payload.b;
 }
 
 function loadChallenge() {
   const input = document.getElementById('challengeCode');
   const errEl = document.getElementById('challengeError');
-  const dec = decodeTeam(input.value);
+  const dec = decodeTeam(extractCode(input.value));
   if (!dec) {
-    if (errEl) errEl.textContent = 'That code is not valid — check for a typo.';
+    if (errEl) errEl.textContent = 'That code/link is not valid — check for a typo.';
     return;
   }
   if (dec.missing > 0 || (dec.payload.dv && dec.payload.dv !== PLAYERS.length)) {
     if (errEl) errEl.textContent =
       'This code was made with a different player dataset — results may be off.';
   }
-  state.challenge = { name: dec.payload.n || 'Challenger', roster: dec.roster, payload: dec.payload };
-  state.yearFrom = dec.payload.f;
-  state.yearTo = dec.payload.t;
-  state.selectedEras = Array.isArray(dec.payload.e) ? dec.payload.e : [];
+  applyChallenge(dec);
   renderSetup();
 }
 
