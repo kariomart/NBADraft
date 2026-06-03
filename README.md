@@ -5,7 +5,7 @@ all five starting positions are filled, an analytics model projects your team's
 record and grades the roster. Built head-to-head challenges in too — share a code
 with a friend and sim a 7-game series between your teams.
 
-**[▶️ Play it here](https://kariomart.github.io/REPO_NAME/)**
+**[▶️ Play it here](https://kariomart.github.io/NBADraft/)**
 
 ## How it works
 
