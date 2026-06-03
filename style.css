@@ -358,6 +358,30 @@ input, select { font-family: inherit; }
   margin-top: 36px;
 }
 
+.reroll-btn {
+  margin-top: 4px;
+  padding: 4px 10px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.reroll-btn:not(:disabled):hover {
+  border-color: var(--accent2);
+  color: var(--text);
+  background: rgba(139, 92, 246, 0.12);
+}
+
+.reroll-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
 .spin-btn {
   padding: 10px 28px;
   background: var(--accent);

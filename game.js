@@ -7,6 +7,8 @@ const state = {
   roster: { PG: null, SG: null, SF: null, PF: null, C: null },
   currentTeam: null,
   currentEra: null,       // the era the wheel landed on this round
+  rerollTeam: 1,          // reroll tokens remaining this round
+  rerollEra: 1,
   spinning: false,
   phase: 'setup',
   posFilter: 'All',
@@ -141,6 +143,8 @@ function startGame() {
   state.round = 1;
   state.roster = { PG: null, SG: null, SF: null, PF: null, C: null };
   state.usedTeams = [];
+  state.rerollTeam = 1;
+  state.rerollEra = 1;
   renderDraftScreen();
   spinWheel();
 }
@@ -163,11 +167,17 @@ function renderDraftScreen() {
               <div class="dial">
                 <div class="dial-spinner" id="teamSpinner"><div id="teamLabel">—</div></div>
                 <div class="dial-cap">TEAM</div>
+                <button class="reroll-btn" id="rerollTeamBtn" onclick="rerollDial('team')" disabled>
+                  🎲 <span id="rerollTeamCount">1</span>
+                </button>
               </div>
               <div class="dial-x">×</div>
               <div class="dial">
                 <div class="dial-spinner era" id="eraSpinner"><div id="eraLabel">—</div></div>
                 <div class="dial-cap">ERA</div>
+                <button class="reroll-btn" id="rerollEraBtn" onclick="rerollDial('era')" disabled>
+                  🎲 <span id="rerollEraCount">1</span>
+                </button>
               </div>
             </div>
           </div>
@@ -423,8 +433,22 @@ function spinWheel() {
 }
 
 // ── Player Picker ─────────────────────────────────────────────────────────────
+function updateRerollButtons() {
+  const tb = document.getElementById('rerollTeamBtn');
+  const eb = document.getElementById('rerollEraBtn');
+  const tc = document.getElementById('rerollTeamCount');
+  const ec = document.getElementById('rerollEraCount');
+  if (tb) tb.disabled = state.rerollTeam <= 0 || state.spinning;
+  if (eb) {
+    eb.disabled = state.rerollEra <= 0 || state.spinning || activeEras().length <= 1;
+  }
+  if (tc) tc.textContent = state.rerollTeam;
+  if (ec) ec.textContent = state.rerollEra;
+}
+
 function showPlayerPicker(team, era) {
   state.phase = 'pick';
+  updateRerollButtons();
   const listArea = document.getElementById('playerListArea');
   if (!listArea) return;
   listArea.style.display = 'flex';
@@ -439,6 +463,78 @@ function showPlayerPicker(team, era) {
   listArea.insertBefore(banner, listArea.firstChild);
 
   renderPlayerList();
+}
+
+function rerollDial(which) {
+  if (state.spinning) return;
+  if (which === 'team' && state.rerollTeam <= 0) return;
+  if (which === 'era' && state.rerollEra <= 0) return;
+
+  state.spinning = true;
+  updateRerollButtons();
+
+  const eras = activeEras();
+  const availableTeams = TEAMS.filter(t => !state.usedTeams.includes(t.id));
+
+  // Build valid reroll targets — must have eligible players with the locked dial.
+  let newTeam = state.currentTeam;
+  let newEra  = state.currentEra;
+
+  if (which === 'team') {
+    state.rerollTeam--;
+    // Return old team to the pool, pick a new one.
+    state.usedTeams = state.usedTeams.filter(id => id !== state.currentTeam.id);
+    const freshTeams = TEAMS.filter(t =>
+      !state.usedTeams.includes(t.id) &&
+      t.id !== state.currentTeam.id &&
+      getPlayersForTeam(t.id, state.currentEra.from, state.currentEra.to).length > 0
+    );
+    if (!freshTeams.length) { state.spinning = false; updateRerollButtons(); return; }
+    newTeam = freshTeams[Math.floor(Math.random() * freshTeams.length)];
+    state.usedTeams.push(newTeam.id);
+  } else {
+    state.rerollEra--;
+    const freshEras = eras.filter(e =>
+      e.key !== state.currentEra.key &&
+      getPlayersForTeam(state.currentTeam.id, e.from, e.to).length > 0
+    );
+    if (!freshEras.length) { state.spinning = false; updateRerollButtons(); return; }
+    newEra = freshEras[Math.floor(Math.random() * freshEras.length)];
+  }
+
+  // Animate only the rerolled dial.
+  const spinnerId = which === 'team' ? 'teamSpinner' : 'eraSpinner';
+  const labelId   = which === 'team' ? 'teamLabel'   : 'eraLabel';
+  const spinner = document.getElementById(spinnerId);
+  const label   = document.getElementById(labelId);
+  const pool    = which === 'team' ? availableTeams : eras;
+
+  let ticks = 0;
+  const total = 12 + Math.floor(Math.random() * 8);   // shorter than a fresh spin
+  spinner.classList.add('spinning');
+
+  const interval = setInterval(() => {
+    label.textContent = pool[Math.floor(Math.random() * pool.length)][which === 'team' ? 'id' : 'label'];
+    ticks++;
+    if (ticks >= total) {
+      clearInterval(interval);
+      spinner.classList.remove('spinning');
+
+      state.currentTeam = newTeam;
+      state.currentEra  = newEra;
+
+      // Settle the team dial visuals.
+      const teamLabel   = document.getElementById('teamLabel');
+      const teamSpinner = document.getElementById('teamSpinner');
+      teamLabel.textContent = state.currentTeam.id;
+      teamSpinner.style.background   = state.currentTeam.color + '22';
+      teamSpinner.style.borderColor  = state.currentTeam.color;
+      document.getElementById('eraLabel').textContent = state.currentEra.label;
+
+      state.spinning = false;
+      showPlayerPicker(state.currentTeam, state.currentEra);
+    }
+  }, 80);
 }
 
 function renderPlayerList() {
@@ -565,6 +661,8 @@ function advanceAfterPick() {
   state.round++;
   state.posFilter = 'All';
   state.searchQuery = '';
+  state.rerollTeam = 1;
+  state.rerollEra = 1;
   renderDraftScreen();
   spinWheel();
 }
