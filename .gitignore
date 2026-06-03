@@ -1,0 +1,9 @@
+# Build artifacts from fetch_nba_data.py (raw API response cache — not needed to run the game)
+nba_cache/
+
+# Python
+__pycache__/
+*.pyc
+
+# macOS
+.DS_Store

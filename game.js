@@ -1,0 +1,785 @@
+// ── State ────────────────────────────────────────────────────────────────────
+const state = {
+  yearFrom: 1980,
+  yearTo: 2024,
+  round: 1,
+  totalRounds: 5,
+  roster: { PG: null, SG: null, SF: null, PF: null, C: null },
+  currentTeam: null,
+  spinning: false,
+  phase: 'setup',
+  posFilter: 'All',
+  sortBy: 'ppg',
+  searchQuery: '',
+  usedTeams: [],
+  ballKnowledge: false,   // hide all stats during the draft, reveal at the end
+  selectedEras: [],       // multi-select era tags driving yearFrom/yearTo
+  challenge: null,        // an opponent team loaded from a challenge code
+};
+
+const FILL_ORDER = ['PG', 'SG', 'SF', 'PF', 'C'];
+
+// Selectable era tags. Multi-select → the active window spans from the earliest
+// selected era's start to the latest selected era's end.
+const ERAS = [
+  { key: '80s',  label: '80s',      from: 1979, to: 1989 },
+  { key: '90s',  label: '90s',      from: 1989, to: 1999 },
+  { key: '00s',  label: '2000s',    from: 1999, to: 2009 },
+  { key: '10s',  label: '2010s',    from: 2009, to: 2019 },
+  { key: '20s',  label: '2020s',    from: 2019, to: 2024 },
+  { key: 'all',  label: 'All-Time', from: 1960, to: 2024 },
+];
+
+// ── Drag State ────────────────────────────────────────────────────────────────
+const drag = { type: null, playerId: null, fromPos: null };
+
+// ── Init ─────────────────────────────────────────────────────────────────────
+function init() {
+  renderSetup();
+}
+
+// ── Setup Phase ───────────────────────────────────────────────────────────────
+function renderSetup() {
+  state.phase = 'setup';
+  const app = document.getElementById('app');
+  const locked = !!state.challenge;   // era is fixed to match the opponent
+
+  app.innerHTML = `
+    <div class="setup-screen">
+      <div class="logo">🏀 NBA Draft Sim</div>
+      <h1>Build Your All-Time Team</h1>
+      <p class="subtitle">Set your era, spin for teams, draft players, get a record.</p>
+
+      ${locked ? `
+      <div class="challenge-banner">
+        <div class="challenge-banner-main">⚔️ Challenge from <strong>${state.challenge.name}</strong></div>
+        <div class="challenge-banner-sub">Era locked to ${state.yearFrom}–${state.yearTo} · draft your five, then face their team in a 7-game series.</div>
+        <button class="btn-ghost" onclick="clearChallenge()">Cancel challenge</button>
+      </div>` : ''}
+
+      <div class="year-inputs ${locked ? 'locked' : ''}">
+        <div class="year-group">
+          <label>From Year</label>
+          <input type="number" id="yearFrom" value="${state.yearFrom}" min="1950" max="2024" step="1" ${locked ? 'disabled' : ''}>
+        </div>
+        <div class="year-sep">–</div>
+        <div class="year-group">
+          <label>To Year</label>
+          <input type="number" id="yearTo" value="${state.yearTo}" min="1950" max="2024" step="1" ${locked ? 'disabled' : ''}>
+        </div>
+      </div>
+      <div class="era-label">${locked ? 'Era locked by challenge' : 'Tap one or more eras to span them'}</div>
+      <div class="era-presets ${locked ? 'locked' : ''}">
+        ${ERAS.map(e => `<button class="preset-btn ${state.selectedEras.includes(e.key) ? 'active' : ''}" ${locked ? '' : `onclick="toggleEra('${e.key}')"`}>${e.label}</button>`).join('')}
+      </div>
+
+      <button class="mode-toggle ${state.ballKnowledge ? 'on' : ''}" id="bkToggle" onclick="toggleBallKnowledge()">
+        <span class="mode-toggle-switch"><span class="mode-toggle-knob"></span></span>
+        <span class="mode-toggle-text">
+          <span class="mode-toggle-title">🧠 Ball Knowledge Mode</span>
+          <span class="mode-toggle-sub">Stats hidden while drafting — pick on name & gut alone</span>
+        </span>
+      </button>
+
+      <button class="btn-primary" onclick="startGame()">${locked ? `Draft vs ${state.challenge.name}` : 'Start Draft'}</button>
+
+      ${locked ? '' : `
+      <div class="challenge-entry">
+        <div class="challenge-entry-title">⚔️ Got a challenge code?</div>
+        <div class="challenge-entry-row">
+          <input id="challengeCode" class="challenge-input" placeholder="Paste a friend's code…">
+          <button class="btn-ghost" onclick="loadChallenge()">Load</button>
+        </div>
+        <div class="challenge-error" id="challengeError"></div>
+      </div>`}
+    </div>
+  `;
+  // Manually editing a year is a custom range — drop any selected era tags.
+  document.getElementById('yearFrom').addEventListener('change', e => {
+    state.yearFrom = parseInt(e.target.value);
+    state.selectedEras = [];
+    renderSetup();
+  });
+  document.getElementById('yearTo').addEventListener('change', e => {
+    state.yearTo = parseInt(e.target.value);
+    state.selectedEras = [];
+    renderSetup();
+  });
+}
+
+function toggleBallKnowledge() {
+  state.ballKnowledge = !state.ballKnowledge;
+  document.getElementById('bkToggle').classList.toggle('on', state.ballKnowledge);
+}
+
+// Toggle an era tag, then span the active window across all selected eras.
+function toggleEra(key) {
+  const i = state.selectedEras.indexOf(key);
+  if (i >= 0) state.selectedEras.splice(i, 1);
+  else state.selectedEras.push(key);
+
+  const sel = ERAS.filter(e => state.selectedEras.includes(e.key));
+  if (sel.length) {
+    state.yearFrom = Math.min(...sel.map(e => e.from));
+    state.yearTo = Math.max(...sel.map(e => e.to));
+  }
+  renderSetup();
+}
+
+function startGame() {
+  state.round = 1;
+  state.roster = { PG: null, SG: null, SF: null, PF: null, C: null };
+  state.usedTeams = [];
+  renderDraftScreen();
+  spinWheel();
+}
+
+// ── Draft Screen ──────────────────────────────────────────────────────────────
+function renderDraftScreen() {
+  state.phase = 'spin';
+  const app = document.getElementById('app');
+  app.innerHTML = `
+    <div class="draft-screen">
+      <div class="draft-header">
+        <button class="btn-ghost" onclick="renderSetup()">← Back</button>
+        <div class="round-badge" id="roundBadge">Round ${state.round}/${state.totalRounds}</div>
+        <div class="era-badge">${state.yearFrom} – ${state.yearTo}</div>
+      </div>
+      <div class="draft-body">
+        <div class="left-panel">
+          <div class="wheel-area" id="wheelArea">
+            <div class="wheel-spinner" id="wheelSpinner">
+              <div id="wheelLabel">Spinning...</div>
+            </div>
+            <button class="spin-btn" id="spinBtn" onclick="spinWheel()" disabled>Spin</button>
+          </div>
+          <div class="player-list-area" id="playerListArea" style="display:none">
+            <div class="list-controls">
+              <div class="pos-filters">
+                ${['All','PG','SG','SF','PF','C'].map(p => `<button class="pos-btn ${state.posFilter===p?'active':''}" onclick="setPosFilter('${p}')">${p}</button>`).join('')}
+              </div>
+              <input class="search-input" id="searchInput" placeholder="Search player..." value="${state.searchQuery}" oninput="setSearch(this.value)">
+              ${state.ballKnowledge ? '' : `
+              <select class="sort-select" onchange="setSort(this.value)">
+                <option value="ppg" ${state.sortBy==='ppg'?'selected':''}>PPG</option>
+                <option value="rpg" ${state.sortBy==='rpg'?'selected':''}>RPG</option>
+                <option value="apg" ${state.sortBy==='apg'?'selected':''}>APG</option>
+                <option value="per" ${state.sortBy==='per'?'selected':''}>PER</option>
+              </select>`}
+            </div>
+            <div class="players-count" id="playersCount"></div>
+            ${state.ballKnowledge ? '<div class="drag-hint bk-hint">🧠 Ball Knowledge Mode — stats revealed at the end. Trust your gut.</div>' : '<div class="drag-hint">Drag a player to a matching position slot →</div>'}
+            <div class="player-list" id="playerList"></div>
+          </div>
+        </div>
+        <div class="right-panel">
+          <div class="court-container">
+            <div class="court" id="court">
+              ${renderCourtSlots()}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// ── Court ─────────────────────────────────────────────────────────────────────
+function renderCourtSlots() {
+  const slots = [
+    { id: 'C',  cls: 'slot-c' },
+    { id: 'PF', cls: 'slot-pf' },
+    { id: 'SF', cls: 'slot-sf' },
+    { id: 'PG', cls: 'slot-pg' },
+    { id: 'SG', cls: 'slot-sg' },
+  ];
+
+  return slots.map(slot => {
+    const p = state.roster[slot.id];
+    const dragAttrs = p
+      ? `draggable="true" ondragstart="onSlotDragStart(event,'${slot.id}')" ondragend="onDragEnd(event)"`
+      : '';
+    const inner = p
+      ? `<div class="slot-name">${p.name.split(' ').pop()}</div><div class="slot-pos-label">${slot.id}</div>`
+      : `<div class="slot-pos-label">${slot.id}</div>`;
+
+    return `
+      <div class="court-slot ${slot.cls} ${p ? 'filled' : 'empty'}"
+           data-pos="${slot.id}"
+           ${dragAttrs}
+           ondragover="onSlotDragOver(event,'${slot.id}')"
+           ondrop="onSlotDrop(event,'${slot.id}')"
+           ondragleave="onSlotDragLeave(event)">
+        ${inner}
+      </div>
+    `;
+  }).join('');
+}
+
+function updateCourt() {
+  const court = document.getElementById('court');
+  if (court) court.innerHTML = renderCourtSlots();
+}
+
+// ── Drag: from player list ────────────────────────────────────────────────────
+function onPlayerDragStart(event, playerId) {
+  drag.type = 'list';
+  drag.playerId = playerId;
+  drag.fromPos = null;
+  event.dataTransfer.effectAllowed = 'move';
+  highlightValidSlots(playerId, null);
+}
+
+// ── Drag: from court slot ────────────────────────────────────────────────────
+function onSlotDragStart(event, pos) {
+  const player = state.roster[pos];
+  if (!player) { event.preventDefault(); return; }
+  drag.type = 'slot';
+  drag.playerId = player.id;
+  drag.fromPos = pos;
+  event.dataTransfer.effectAllowed = 'move';
+  event.currentTarget.classList.add('dragging');
+  highlightValidSlots(player.id, pos);
+}
+
+// ── Slot drag events ──────────────────────────────────────────────────────────
+function onSlotDragOver(event, pos) {
+  event.preventDefault();
+  const player = PLAYERS.find(p => p.id === drag.playerId);
+  if (!player) return;
+  const el = event.currentTarget;
+  el.classList.remove('drag-over', 'drag-over-invalid');
+  if (player.positions.includes(pos)) {
+    event.dataTransfer.dropEffect = 'move';
+    el.classList.add('drag-over');
+  } else {
+    event.dataTransfer.dropEffect = 'none';
+    el.classList.add('drag-over-invalid');
+  }
+}
+
+function onSlotDragLeave(event) {
+  event.currentTarget.classList.remove('drag-over', 'drag-over-invalid');
+}
+
+function onSlotDrop(event, targetPos) {
+  event.preventDefault();
+  clearDragHighlights();
+
+  const player = PLAYERS.find(p => p.id === drag.playerId);
+  if (!player) return;
+
+  // Hard block: player doesn't play this position
+  if (!player.positions.includes(targetPos)) {
+    flashInvalid(targetPos);
+    return;
+  }
+
+  if (drag.type === 'list') {
+    // Only place in empty slots (can't overwrite a pick with another from the list)
+    if (state.roster[targetPos]) {
+      flashInvalid(targetPos);
+      return;
+    }
+    state.roster[targetPos] = player;
+    drag.type = null; drag.playerId = null; drag.fromPos = null;
+    advanceAfterPick();
+
+  } else if (drag.type === 'slot') {
+    const fromPos = drag.fromPos;
+    if (fromPos === targetPos) { drag.type = null; return; }
+
+    const targetPlayer = state.roster[targetPos];
+
+    if (targetPlayer) {
+      // Swap: the displaced player must be eligible for fromPos
+      if (!targetPlayer.positions.includes(fromPos)) {
+        flashInvalid(targetPos);
+        return;
+      }
+      state.roster[fromPos] = targetPlayer;
+    } else {
+      state.roster[fromPos] = null;
+    }
+    state.roster[targetPos] = player;
+    drag.type = null; drag.playerId = null; drag.fromPos = null;
+    updateCourt();
+  }
+}
+
+function onDragEnd(event) {
+  clearDragHighlights();
+  document.querySelectorAll('.court-slot.dragging').forEach(el => el.classList.remove('dragging'));
+  drag.type = null;
+  drag.playerId = null;
+  drag.fromPos = null;
+}
+
+// ── Drag helpers ──────────────────────────────────────────────────────────────
+function highlightValidSlots(playerId, excludePos) {
+  const player = PLAYERS.find(p => p.id === playerId);
+  if (!player) return;
+  FILL_ORDER.forEach(pos => {
+    if (pos === excludePos) return;
+    const el = document.querySelector(`.court-slot[data-pos="${pos}"]`);
+    if (!el) return;
+    if (player.positions.includes(pos)) {
+      el.classList.add('drag-valid');
+    } else {
+      el.classList.add('drag-invalid');
+    }
+  });
+}
+
+function clearDragHighlights() {
+  document.querySelectorAll('.court-slot').forEach(el => {
+    el.classList.remove('drag-valid', 'drag-invalid', 'drag-over', 'drag-over-invalid');
+  });
+}
+
+function flashInvalid(pos) {
+  const el = document.querySelector(`.court-slot[data-pos="${pos}"]`);
+  if (!el) return;
+  el.classList.add('flash-invalid');
+  el.addEventListener('animationend', () => el.classList.remove('flash-invalid'), { once: true });
+}
+
+// ── Wheel Spin ────────────────────────────────────────────────────────────────
+function spinWheel() {
+  if (state.spinning) return;
+  state.spinning = true;
+
+  const label = document.getElementById('wheelLabel');
+  const spinner = document.getElementById('wheelSpinner');
+  const spinBtn = document.getElementById('spinBtn');
+  if (spinBtn) spinBtn.disabled = true;
+
+  const available = TEAMS.filter(t => !state.usedTeams.includes(t.id));
+  if (!available.length) { endGame(); return; }
+
+  let ticks = 0;
+  const total = 20 + Math.floor(Math.random() * 15);
+  let idx = 0;
+
+  spinner.classList.add('spinning');
+
+  const interval = setInterval(() => {
+    idx = Math.floor(Math.random() * available.length);
+    label.textContent = available[idx].id;
+    ticks++;
+    if (ticks >= total) {
+      clearInterval(interval);
+      spinner.classList.remove('spinning');
+      const chosen = available[idx];
+      state.currentTeam = chosen;
+      state.usedTeams.push(chosen.id);
+      label.textContent = chosen.id;
+      spinner.style.background = chosen.color + '22';
+      spinner.style.borderColor = chosen.color;
+      state.spinning = false;
+      showPlayerPicker(chosen);
+    }
+  }, 80);
+}
+
+// ── Player Picker ─────────────────────────────────────────────────────────────
+function showPlayerPicker(team) {
+  state.phase = 'pick';
+  const listArea = document.getElementById('playerListArea');
+  if (!listArea) return;
+  listArea.style.display = 'flex';
+
+  // Team name banner (insert before list-controls)
+  const existing = listArea.querySelector('.team-name-banner');
+  if (existing) existing.remove();
+  const banner = document.createElement('div');
+  banner.className = 'team-name-banner';
+  banner.textContent = team.name;
+  banner.style.color = team.color;
+  listArea.insertBefore(banner, listArea.firstChild);
+
+  renderPlayerList();
+}
+
+function renderPlayerList() {
+  const team = state.currentTeam;
+  const allPlayers = getPlayersForTeam(team.id, state.yearFrom, state.yearTo);
+
+  let filtered = allPlayers;
+  if (state.posFilter !== 'All') {
+    filtered = filtered.filter(p => p.positions.includes(state.posFilter));
+  }
+  if (state.searchQuery) {
+    const q = state.searchQuery.toLowerCase();
+    filtered = filtered.filter(p => p.name.toLowerCase().includes(q));
+  }
+  if (state.ballKnowledge) {
+    // No stat-based ordering — that would leak the very info we're hiding.
+    filtered.sort((a, b) => a.name.localeCompare(b.name));
+  } else {
+    filtered.sort((a, b) => {
+      if (state.sortBy === 'per') return b.per - a.per;
+      return b.stats[state.sortBy] - a.stats[state.sortBy];
+    });
+  }
+
+  const countEl = document.getElementById('playersCount');
+  if (countEl) countEl.textContent = `${filtered.length} player${filtered.length !== 1 ? 's' : ''} available`;
+
+  const listEl = document.getElementById('playerList');
+  if (!listEl) return;
+
+  if (filtered.length === 0) {
+    listEl.innerHTML = '<div class="no-players">No players match your filters.</div>';
+    return;
+  }
+
+  listEl.innerHTML = filtered.map(p => {
+    const canFill = playerCanFill(p);
+    const posLabel = p.positions.join(' · ');
+
+    // Show position pips: player's positions with open/filled state
+    const pips = p.positions.map(pos => {
+      const isOpen = !state.roster[pos];
+      return `<span class="slot-pip ${isOpen ? 'pip-open' : 'pip-taken'}">${pos}</span>`;
+    }).join('');
+
+    return `
+      <div class="player-card ${canFill ? '' : 'no-fit'}"
+           draggable="true"
+           onclick="quickPlace(${p.id})"
+           ondragstart="onPlayerDragStart(event, ${p.id})"
+           ondragend="onDragEnd(event)">
+        <div class="player-info">
+          <div class="player-name">${p.name}</div>
+          <div class="player-meta"><span class="player-pos">${posLabel}</span> · ${p.peak_years[0]}–${p.peak_years[1]}</div>
+          <div class="player-pips">${pips}</div>
+        </div>
+        ${state.ballKnowledge ? `
+        <div class="player-stats hidden-stats">
+          <div class="stat-hidden">🧠</div>
+        </div>` : `
+        <div class="player-stats">
+          <div class="stat"><span>${p.stats.ppg.toFixed(1)}</span><small>PPG</small></div>
+          <div class="stat"><span>${p.stats.rpg.toFixed(1)}</span><small>RPG</small></div>
+          <div class="stat"><span>${p.stats.apg.toFixed(1)}</span><small>APG</small></div>
+          <div class="stat"><span>${p.stats.spg.toFixed(1)}</span><small>SPG</small></div>
+          <div class="stat"><span>${p.stats.bpg.toFixed(1)}</span><small>BPG</small></div>
+        </div>`}
+      </div>
+    `;
+  }).join('');
+}
+
+function getOpenPositions() {
+  return FILL_ORDER.filter(pos => !state.roster[pos]);
+}
+
+function playerCanFill(player) {
+  return getOpenPositions().some(pos => player.positions.includes(pos));
+}
+
+// Click (no drag) → drop the player into their first eligible OPEN position,
+// preferring the order they're listed in (their "natural" position first).
+function quickPlace(playerId) {
+  const player = PLAYERS.find(p => p.id === playerId);
+  if (!player) return;
+
+  const target = player.positions.find(pos => !state.roster[pos]);
+  if (!target) return;   // none of their positions are open — ignore the click
+
+  state.roster[target] = player;
+  advanceAfterPick();
+}
+
+// ── Filters / Sort ────────────────────────────────────────────────────────────
+function setPosFilter(pos) {
+  state.posFilter = pos;
+  renderPlayerList();
+  document.querySelectorAll('.pos-btn').forEach(b => {
+    b.classList.toggle('active', b.textContent === pos);
+  });
+}
+
+function setSort(val) {
+  state.sortBy = val;
+  renderPlayerList();
+}
+
+function setSearch(val) {
+  state.searchQuery = val;
+  renderPlayerList();
+}
+
+// ── After placing a pick ──────────────────────────────────────────────────────
+function advanceAfterPick() {
+  updateCourt();
+
+  const allFilled = FILL_ORDER.every(pos => state.roster[pos]);
+  if (allFilled || state.round >= state.totalRounds) {
+    setTimeout(endGame, 500);
+    return;
+  }
+
+  state.round++;
+  state.posFilter = 'All';
+  state.searchQuery = '';
+  renderDraftScreen();
+  spinWheel();
+}
+
+// ── Result Screen (model-driven) ────────────────────────────────────────────
+function endGame() {
+  state.phase = 'result';
+  const ev = MODEL.evaluateTeam(state.roster);
+
+  // If an opponent code was loaded, show the head-to-head series instead.
+  if (state.challenge) { renderHeadToHead(ev); return; }
+
+  const gradeColor = MODEL.gradeColor(ev.grade);
+  const shareCode = encodeTeam(state.roster, '');
+
+  const subCards = [
+    ['Offense', ev.sub.offense],
+    ['Defense', ev.sub.defense],
+    ['Playmaking', ev.sub.playmaking],
+    ['Rebounding', ev.sub.rebounding],
+    ['Star Power', ev.sub.starPower],
+    ['Balance', ev.sub.balance],
+  ].map(([label, s]) => `
+    <div class="subgrade">
+      <div class="subgrade-top">
+        <span class="subgrade-label">${label}</span>
+        <span class="subgrade-grade" style="color:${MODEL.gradeColor(s.grade)}">${s.grade}</span>
+      </div>
+      <div class="subgrade-bar">
+        <div class="subgrade-fill" style="width:${s.score}%;background:${MODEL.gradeColor(s.grade)}"></div>
+      </div>
+    </div>
+  `).join('');
+
+  const reportHtml = `
+    ${ev.report.strengths.map(s => `<li class="report-pos">✓ ${s}</li>`).join('')}
+    ${ev.report.weaknesses.map(s => `<li class="report-neg">✗ ${s}</li>`).join('')}
+  `;
+
+  const rosterHtml = ev.contributions.map(c => {
+    const p = c.player;
+    return `
+      <div class="result-player">
+        <div class="result-pos">${c.pos}</div>
+        <div class="result-player-info">
+          ${p
+            ? `<div class="result-player-name">${p.name}</div>
+               <div class="result-player-stats">${p.stats.ppg} PPG · ${p.stats.rpg} RPG · ${p.stats.apg} APG · ${p.ts}% TS</div>`
+            : `<div class="result-player-name empty">— Empty —</div>`}
+        </div>
+        <div class="result-ws" title="Estimated Win Shares">
+          <span>${c.ws}</span><small>WS</small>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  document.getElementById('app').innerHTML = `
+    <div class="result-screen">
+      <div class="result-hero">
+        <div class="hero-left">
+          <h1>Your Team</h1>
+          <div class="record-badge">
+            <span class="record-wins">${ev.wins}</span>
+            <span class="record-dash">-</span>
+            <span class="record-losses">${ev.losses}</span>
+          </div>
+          <div class="record-label">Projected Record</div>
+          <div class="projection-label">${ev.projection}</div>
+        </div>
+        <div class="hero-grade" style="border-color:${gradeColor}">
+          <div class="hero-grade-letter" style="color:${gradeColor}">${ev.grade}</div>
+          <div class="hero-grade-label">Team Grade</div>
+        </div>
+      </div>
+
+      <div class="ratings-row">
+        <div class="rating-pill"><span class="rating-val" style="color:#22c55e">${ev.ortg}</span><small>OFF RTG</small></div>
+        <div class="rating-pill"><span class="rating-val" style="color:#ef4444">${ev.drtg}</span><small>DEF RTG</small></div>
+        <div class="rating-pill"><span class="rating-val" style="color:${ev.netRtg>=0?'#22c55e':'#ef4444'}">${ev.netRtg>=0?'+':''}${ev.netRtg}</span><small>NET RTG</small></div>
+        <div class="rating-pill"><span class="rating-val">${ev.pythagWins}</span><small>PYTHAG W</small></div>
+      </div>
+
+      <div class="result-grid">
+        <div class="result-col">
+          <div class="col-title">Grades</div>
+          <div class="subgrades">${subCards}</div>
+        </div>
+        <div class="result-col">
+          <div class="col-title">Scouting Report</div>
+          <ul class="report-list">${reportHtml}</ul>
+        </div>
+      </div>
+
+      <div class="result-col">
+        <div class="col-title">Starting Five</div>
+        <div class="result-roster">${rosterHtml}</div>
+      </div>
+
+      <div class="result-col share-block">
+        <div class="col-title">⚔️ Challenge a Friend</div>
+        <p class="share-sub">Send this code. They draft in the same era (${state.yearFrom}–${state.yearTo}), then we sim a 7-game series between your teams.</p>
+        <input id="challengerName" class="share-name" placeholder="Your name (optional)" maxlength="24" oninput="refreshShareCode()">
+        <div class="share-code-row">
+          <input id="shareCode" class="share-code" readonly value="${shareCode}">
+          <button class="btn-ghost" id="copyBtn" onclick="copyShareCode()">Copy</button>
+        </div>
+      </div>
+
+      <div class="result-actions">
+        <button class="btn-primary" onclick="startGame()">Draft Again</button>
+        <button class="btn-ghost" onclick="renderSetup()">Change Era</button>
+      </div>
+    </div>
+  `;
+}
+
+// ── Challenge codes ───────────────────────────────────────────────────────────
+
+// URL-safe base64 (UTF-8 aware).
+function b64urlEncode(str) {
+  return btoa(unescape(encodeURIComponent(str)))
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+function b64urlDecode(s) {
+  s = s.replace(/-/g, '+').replace(/_/g, '/');
+  while (s.length % 4) s += '=';
+  return decodeURIComponent(escape(atob(s)));
+}
+
+// Pack a roster + era into a shareable code.
+function encodeTeam(roster, name) {
+  const payload = {
+    v: 1,
+    n: (name || '').slice(0, 24),
+    f: state.yearFrom, t: state.yearTo,
+    e: state.selectedEras.slice(),
+    dv: PLAYERS.length,                                  // dataset size (soft check)
+    p: FILL_ORDER.map(pos => (roster[pos] ? roster[pos].id : 0)),
+  };
+  return b64urlEncode(JSON.stringify(payload));
+}
+
+// Decode a code back into { payload, roster, missing }.
+function decodeTeam(code) {
+  try {
+    const payload = JSON.parse(b64urlDecode(code.trim()));
+    if (!payload || !Array.isArray(payload.p) || payload.p.length !== 5) return null;
+    const roster = {};
+    let missing = 0;
+    FILL_ORDER.forEach((pos, i) => {
+      const pl = PLAYERS.find(p => p.id === payload.p[i]) || null;
+      if (!pl) missing++;
+      roster[pos] = pl;
+    });
+    return { payload, roster, missing };
+  } catch (e) {
+    return null;
+  }
+}
+
+function refreshShareCode() {
+  const name = document.getElementById('challengerName').value;
+  document.getElementById('shareCode').value = encodeTeam(state.roster, name);
+}
+
+function copyShareCode() {
+  const field = document.getElementById('shareCode');
+  field.select();
+  navigator.clipboard?.writeText(field.value);
+  const btn = document.getElementById('copyBtn');
+  if (btn) { btn.textContent = 'Copied!'; setTimeout(() => { btn.textContent = 'Copy'; }, 1500); }
+}
+
+function loadChallenge() {
+  const input = document.getElementById('challengeCode');
+  const errEl = document.getElementById('challengeError');
+  const dec = decodeTeam(input.value);
+  if (!dec) {
+    if (errEl) errEl.textContent = 'That code is not valid — check for a typo.';
+    return;
+  }
+  if (dec.missing > 0 || (dec.payload.dv && dec.payload.dv !== PLAYERS.length)) {
+    if (errEl) errEl.textContent =
+      'This code was made with a different player dataset — results may be off.';
+  }
+  state.challenge = { name: dec.payload.n || 'Challenger', roster: dec.roster, payload: dec.payload };
+  state.yearFrom = dec.payload.f;
+  state.yearTo = dec.payload.t;
+  state.selectedEras = Array.isArray(dec.payload.e) ? dec.payload.e : [];
+  renderSetup();
+}
+
+function clearChallenge() {
+  state.challenge = null;
+  renderSetup();
+}
+
+// ── Head-to-head result ─────────────────────────────────────────────────────
+function renderHeadToHead(evMine) {
+  const evOpp = MODEL.evaluateTeam(state.challenge.roster);
+  const series = MODEL.simulateSeries(evMine, evOpp);   // A = mine, B = opponent
+
+  const myName = 'You';
+  const oppName = state.challenge.name;
+  const iWin = series.winner === 'A';
+  const winnerName = iWin ? myName : oppName;
+  const seriesPct = Math.round(series.pSeriesWinner * 100);
+  const myGamePct = Math.round(series.pGameA * 100);
+  const myBarPct = Math.round(series.pSeriesA * 100);
+
+  const teamColumn = (ev, label, isMe) => {
+    const gc = MODEL.gradeColor(ev.grade);
+    const roster = ev.contributions.map(c => `
+      <div class="h2h-player">
+        <span class="h2h-pos">${c.pos}</span>
+        <span class="h2h-name">${c.player ? c.player.name : '—'}</span>
+        <span class="h2h-ws">${c.ws}</span>
+      </div>`).join('');
+    return `
+      <div class="h2h-team ${isMe ? 'me' : 'opp'}">
+        <div class="h2h-team-head">
+          <div class="h2h-team-name">${label}</div>
+          <div class="h2h-grade" style="color:${gc}">${ev.grade}</div>
+        </div>
+        <div class="h2h-record">${ev.wins}-${ev.losses} · Net ${ev.netRtg >= 0 ? '+' : ''}${ev.netRtg}</div>
+        <div class="h2h-roster">${roster}</div>
+      </div>`;
+  };
+
+  document.getElementById('app').innerHTML = `
+    <div class="result-screen h2h-screen">
+      <div class="h2h-banner ${iWin ? 'win' : 'lose'}">
+        <div class="h2h-verdict">${winnerName} win${winnerName === 'You' ? '' : 's'} the series</div>
+        <div class="h2h-series">${seriesPct}% · most likely <strong>${series.likelyScore}</strong></div>
+        <div class="h2h-bar">
+          <div class="h2h-bar-fill" style="width:${myBarPct}%"></div>
+          <span class="h2h-bar-label left">You ${myBarPct}%</span>
+          <span class="h2h-bar-label right">${oppName} ${100 - myBarPct}%</span>
+        </div>
+        <div class="h2h-detail">Single game: you win ${myGamePct}% · expected margin ${series.marginA >= 0 ? '+' : ''}${series.marginA} per game</div>
+      </div>
+
+      <div class="h2h-grid">
+        ${teamColumn(evMine, myName, true)}
+        <div class="h2h-vs">VS</div>
+        ${teamColumn(evOpp, oppName, false)}
+      </div>
+
+      <div class="result-actions">
+        <button class="btn-primary" onclick="startGame()">Rematch (same era)</button>
+        <button class="btn-ghost" onclick="clearChallenge()">New Game</button>
+      </div>
+    </div>
+  `;
+}
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+window.addEventListener('DOMContentLoaded', init);
