@@ -1141,6 +1141,21 @@ function applyChallenge(dec) {
   state.selectedEras = Array.isArray(dec.payload.e) ? dec.payload.e : [];
   state.ballKnowledge = !!dec.payload.b;
   state.salaryCapMode = !!dec.payload.sc;
+
+  // Personalize the page title and OG tags with the challenger's name.
+  const name = state.challenge.name;
+  const title = `${name} has challenged you — NBA Draft Sim`;
+  const desc  = `${name} has drafted their all-time starting five. Can you build a better team and win a 7-game series?`;
+  document.title = title;
+  const setMeta = (attr, val, content) => {
+    let el = document.querySelector(`meta[${attr}="${val}"]`);
+    if (!el) { el = document.createElement('meta'); el.setAttribute(attr, val); document.head.appendChild(el); }
+    el.content = content;
+  };
+  setMeta('property', 'og:title', title);
+  setMeta('property', 'og:description', desc);
+  setMeta('name', 'twitter:title', title);
+  setMeta('name', 'twitter:description', desc);
 }
 
 function loadChallenge() {
