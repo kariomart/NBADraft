@@ -17,6 +17,8 @@ const state = {
   usedTeams: [],
   ballKnowledge: false,   // hide all stats during the draft, reveal at the end
   salaryCapMode: false,   // players cost $1–$5; stay under the $15 cap
+  sameTeamsChallenge: false, // encode draft history so opponent gets same teams/eras
+  draftHistory: [],       // [{t,ef,et,ek,el}] — one entry per round, filled as picks are made
   selectedEras: [],       // multi-select era tags driving yearFrom/yearTo
   challenge: null,        // an opponent team loaded from a challenge code
   coach: null,            // selected after the roster is full
@@ -68,7 +70,7 @@ function renderSetup() {
       ${locked ? `
       <div class="challenge-banner">
         <div class="challenge-banner-main">⚔️ Challenge from <strong>${state.challenge.name}</strong></div>
-        <div class="challenge-banner-sub">Era locked to ${state.yearFrom}–${state.yearTo}${state.ballKnowledge ? ' · 🧠 Ball Knowledge ON' : ''}${state.salaryCapMode ? ' · 💰 Salary Cap ON ($15)' : ''} · draft your five, then face their team in a 7-game series.</div>
+        <div class="challenge-banner-sub">Era locked to ${state.yearFrom}–${state.yearTo}${state.ballKnowledge ? ' · 🧠 Ball Knowledge ON' : ''}${state.salaryCapMode ? ' · 💰 Salary Cap ON ($15)' : ''}${state.challenge.payload.sq ? ' · 🔁 Mirror Draft — your teams & eras are predetermined' : ''} · draft your five, then face their team in a 7-game series.</div>
         <button class="btn-ghost" onclick="clearChallenge()">Cancel challenge</button>
       </div>` : ''}
 
@@ -135,6 +137,13 @@ function toggleBallKnowledge() {
   document.getElementById('bkToggle').classList.toggle('on', state.ballKnowledge);
 }
 
+function toggleSameTeams() {
+  state.sameTeamsChallenge = !state.sameTeamsChallenge;
+  const btn = document.getElementById('sameTeamsToggle');
+  if (btn) btn.classList.toggle('on', state.sameTeamsChallenge);
+  refreshShareCode();
+}
+
 function toggleSalaryCap() {
   state.salaryCapMode = !state.salaryCapMode;
   const btn = document.getElementById('scToggle');
@@ -194,6 +203,8 @@ function startGame() {
   state.rerollTeam = 1;
   state.rerollEra = 1;
   state.coach = null;
+  state.draftHistory = [];
+  state.sameTeamsChallenge = false;
   renderDraftScreen();
   spinWheel();
 }
@@ -456,9 +467,19 @@ function spinWheel() {
     if (state.salaryCapMode && !players.some(p => playerCanFill(p))) return;
     combos.push({ team: t, era: e });
   }));
-  if (!combos.length) { endGame(); return; }
 
-  const chosen = combos[Math.floor(Math.random() * combos.length)];
+  // Mirror draft: use the forced team/era from the challenger's history if present.
+  const sq = state.challenge?.payload?.sq;
+  let chosen;
+  if (sq && sq[state.round - 1]) {
+    const f = sq[state.round - 1];
+    const team = TEAMS.find(t => t.id === f.t);
+    if (team) chosen = { team, era: { key: f.ek, label: f.el, from: f.ef, to: f.et } };
+  }
+  if (!chosen) {
+    if (!combos.length) { endGame(); return; }
+    chosen = combos[Math.floor(Math.random() * combos.length)];
+  }
 
   let ticks = 0;
   const total = 20 + Math.floor(Math.random() * 15);
@@ -735,6 +756,17 @@ function advanceAfterPick() {
   updateCourt();
   updateCapDisplay();
 
+  // Record which team/era was used this round so mirror-draft challenges can replay it.
+  if (state.currentTeam && state.currentEra) {
+    state.draftHistory.push({
+      t: state.currentTeam.id,
+      ef: state.currentEra.from,
+      et: state.currentEra.to,
+      ek: state.currentEra.key,
+      el: state.currentEra.label,
+    });
+  }
+
   const allFilled = FILL_ORDER.every(pos => state.roster[pos]);
   if (allFilled || state.round >= state.totalRounds) {
     setTimeout(spinCoachRound, 500);
@@ -936,6 +968,13 @@ function endGame() {
       <div class="result-col share-block">
         <div class="col-title">⚔️ Challenge a Friend</div>
         <p class="share-sub">Send this link. They draft in the same era (${state.yearFrom}–${state.yearTo})${state.ballKnowledge ? ' with Ball Knowledge mode on' : ''}, then we sim a 7-game series between your teams.</p>
+        <button class="mode-toggle ${state.sameTeamsChallenge ? 'on' : ''}" id="sameTeamsToggle" onclick="toggleSameTeams()" style="max-width:100%;margin-bottom:12px">
+          <span class="mode-toggle-switch"><span class="mode-toggle-knob"></span></span>
+          <span class="mode-toggle-text">
+            <span class="mode-toggle-title">🔁 Mirror Draft</span>
+            <span class="mode-toggle-sub">Opponent gets the exact same teams & eras you drafted from</span>
+          </span>
+        </button>
         <input id="challengerName" class="share-name" placeholder="Your name (optional)" maxlength="24" oninput="refreshShareCode()">
         <div class="share-code-row">
           <input id="shareLink" class="share-code" readonly value="${buildShareURL(shareCode)}">
@@ -965,7 +1004,7 @@ async function copyResultImage() {
 
   try {
     const canvas = await html2canvas(el, {
-      scale: 2,
+      scale: 1,
       useCORS: true,
       backgroundColor: '#0a0f09',
       scrollX: 0,
@@ -1015,6 +1054,7 @@ function encodeTeam(roster, name) {
     e: state.selectedEras.slice(),
     b: state.ballKnowledge ? 1 : 0,                      // ball-knowledge mode
     sc: state.salaryCapMode ? 1 : 0,                     // salary cap mode
+    sq: state.sameTeamsChallenge ? state.draftHistory : undefined, // mirror draft history
     dv: PLAYERS.length,                                  // dataset size (soft check)
     p: FILL_ORDER.map(pos => (roster[pos] ? roster[pos].id : 0)),
     c: state.coach ? state.coach.id : null,              // coach id
