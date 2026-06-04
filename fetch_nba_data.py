@@ -354,91 +354,77 @@ for pid in qualified_ids:
         continue
 
     rows = by_player[pid]
-    ps = compute_peak_stats(rows)
-
-    if ps["ppg"] < MIN_PPG:
-        continue
-
-    team = best_team(rows)
-    if not team:
-        continue
-
-    # Skip if a hand-curated player already covers this name on this team.
-    if (norm_name(name), team) in curated_keys:
-        continue
-
     raw_pos = info.get("POSITION", "Forward")
     positions = POS_MAP.get(raw_pos, ["SF", "PF"])
 
-    active_years = sorted(
-        r["_year"] for r in rows
-        if (r.get("GP") or 0) >= 10
-    )
-    peak_years = (
-        [active_years[0], active_years[-1] + 1]
-        if active_years else [2000, 2010]
-    )
+    # Group seasons by the team the player was on that year.
+    team_seasons = defaultdict(list)
+    for r in rows:
+        raw = r.get("TEAM_ABBREVIATION", "")
+        t = TEAM_ALIASES.get(raw, raw)
+        if t in KNOWN_TEAMS:
+            team_seasons[t].append(r)
 
-    # Approximate PER and WS/48 from the box score (no play-by-play needed).
-    # Calibrated so an average starter (14/5/3/1/0.5) lands at PER ≈ 15 and
-    # WS/48 ≈ 0.100 — matching the league baselines used by model.js.
-    raw = (
-        ps["ppg"] * 0.70
-        + ps["rpg"] * 0.90
-        + ps["apg"] * 1.00
-        + ps["spg"] * 2.00
-        + ps["bpg"] * 2.00
-    )
-    # Mild True-Shooting adjustment: reward/penalize scoring efficiency.
-    eff_mult = 0.90 + (ps["ts"] - 50.0) / 100.0
-    per_approx = round(max(2.0, raw * 0.74 * eff_mult), 1)
+    # One entry per (player, team) stint — stats, dates, and era breakdowns
+    # are all scoped to only the seasons spent with that franchise.
+    for team, t_rows in team_seasons.items():
+        # Skip curated players on this team.
+        if (norm_name(name), team) in curated_keys:
+            continue
 
-    ws48_approx = round(
-        max(0.005, min(0.300, 0.100 + (per_approx - 15.0) * 0.011)), 3)
-
-    # Era-specific stats: filter seasons to each decade window.
-    stats_by_era = {}
-    for era_key, (era_from, era_to) in ERA_RANGES.items():
-        era_rows = [
-            r for r in rows
-            if era_from <= r["_year"] < era_to
-            and (r.get("GP") or 0) >= MIN_GP
-            and (r.get("MIN") or 0) >= MIN_MPG
+        qual_rows = [
+            r for r in t_rows
+            if (r.get("GP") or 0) >= MIN_GP and (r.get("MIN") or 0) >= MIN_MPG
         ]
-        if era_rows:
-            es = compute_peak_stats(era_rows)
-            if es["ppg"] >= MIN_PPG:
-                stats_by_era[era_key] = {
-                    "ppg": es["ppg"],
-                    "rpg": es["rpg"],
-                    "apg": es["apg"],
-                    "spg": es["spg"],
-                    "bpg": es["bpg"],
-                }
+        if not qual_rows:
+            continue
 
-    entry = {
-        "id":          next_id,
-        "name":        name,
-        "team":        team,
-        "positions":   positions,
-        "from":        peak_years[0],
-        "to":          peak_years[1],
-        "stats": {
-            "ppg": ps["ppg"],
-            "rpg": ps["rpg"],
-            "apg": ps["apg"],
-            "spg": ps["spg"],
-            "bpg": ps["bpg"],
-        },
-        "ws48":       ws48_approx,
-        "per":        per_approx,
-        "ts":         ps["ts"],
-        "net_rating": ps["net_rating"],
-    }
-    if stats_by_era:
-        entry["statsByEra"] = stats_by_era
-    players_out.append(entry)
-    next_id += 1
+        ps = compute_peak_stats(qual_rows)
+        if ps["ppg"] < MIN_PPG:
+            continue
+
+        active_years = sorted(r["_year"] for r in qual_rows)
+        from_year = active_years[0]
+        to_year   = active_years[-1] + 1
+
+        raw = (
+            ps["ppg"] * 0.70 + ps["rpg"] * 0.90 + ps["apg"] * 1.00
+            + ps["spg"] * 2.00 + ps["bpg"] * 2.00
+        )
+        eff_mult   = 0.90 + (ps["ts"] - 50.0) / 100.0
+        per_approx = round(max(2.0, raw * 0.74 * eff_mult), 1)
+        ws48_approx = round(
+            max(0.005, min(0.300, 0.100 + (per_approx - 15.0) * 0.011)), 3)
+
+        # Era-specific stats: only seasons with this team in each era window.
+        stats_by_era = {}
+        for era_key, (era_from, era_to) in ERA_RANGES.items():
+            era_rows = [
+                r for r in qual_rows
+                if era_from <= r["_year"] < era_to
+            ]
+            if era_rows:
+                es = compute_peak_stats(era_rows)
+                if es["ppg"] >= MIN_PPG:
+                    stats_by_era[era_key] = {
+                        "ppg": es["ppg"], "rpg": es["rpg"], "apg": es["apg"],
+                        "spg": es["spg"], "bpg": es["bpg"],
+                    }
+
+        entry = {
+            "id": next_id, "name": name, "team": team, "positions": positions,
+            "from": from_year, "to": to_year,
+            "stats": {
+                "ppg": ps["ppg"], "rpg": ps["rpg"], "apg": ps["apg"],
+                "spg": ps["spg"], "bpg": ps["bpg"],
+            },
+            "ws48": ws48_approx, "per": per_approx,
+            "ts": ps["ts"], "net_rating": ps["net_rating"],
+        }
+        if stats_by_era:
+            entry["statsByEra"] = stats_by_era
+        players_out.append(entry)
+        next_id += 1
 
 print(f"  Generated {len(players_out)} new players (PPG ≥ {MIN_PPG})\n")
 
