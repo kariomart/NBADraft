@@ -74,6 +74,15 @@ MIN_PPG   = 3.0   # peak PPG threshold
 MIN_GP    = 10    # games played per qualifying season
 MIN_MPG   = 5     # minutes per game per qualifying season
 
+# Era windows matching ERAS in game.js (exclusive upper bound on _year).
+ERA_RANGES = {
+    '80s': (1979, 1989),
+    '90s': (1989, 1999),
+    '00s': (1999, 2009),
+    '10s': (2009, 2019),
+    '20s': (2019, 2024),
+}
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 TIMEOUT = 45   # seconds per request before giving up
@@ -387,7 +396,27 @@ for pid in qualified_ids:
     ws48_approx = round(
         max(0.005, min(0.300, 0.100 + (per_approx - 15.0) * 0.011)), 3)
 
-    players_out.append({
+    # Era-specific stats: filter seasons to each decade window.
+    stats_by_era = {}
+    for era_key, (era_from, era_to) in ERA_RANGES.items():
+        era_rows = [
+            r for r in rows
+            if era_from <= r["_year"] < era_to
+            and (r.get("GP") or 0) >= MIN_GP
+            and (r.get("MIN") or 0) >= MIN_MPG
+        ]
+        if era_rows:
+            es = compute_peak_stats(era_rows)
+            if es["ppg"] >= MIN_PPG:
+                stats_by_era[era_key] = {
+                    "ppg": es["ppg"],
+                    "rpg": es["rpg"],
+                    "apg": es["apg"],
+                    "spg": es["spg"],
+                    "bpg": es["bpg"],
+                }
+
+    entry = {
         "id":          next_id,
         "name":        name,
         "team":        team,
@@ -405,7 +434,10 @@ for pid in qualified_ids:
         "per":        per_approx,
         "ts":         ps["ts"],
         "net_rating": ps["net_rating"],
-    })
+    }
+    if stats_by_era:
+        entry["statsByEra"] = stats_by_era
+    players_out.append(entry)
     next_id += 1
 
 print(f"  Generated {len(players_out)} new players (PPG ≥ {MIN_PPG})\n")

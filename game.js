@@ -138,6 +138,31 @@ function toggleBallKnowledge() {
   document.getElementById('bkToggle').classList.toggle('on', state.ballKnowledge);
 }
 
+// Returns era-specific stats for a player, or null if not available.
+function getEraStats(player, eraKey) {
+  return (eraKey && player.statsByEra?.[eraKey]) ? player.statsByEra[eraKey] : null;
+}
+
+// Clones a player from the PLAYERS array, overriding stats/from/to with
+// era-specific values when available. Used when placing into the roster so
+// model.js sees the right numbers without mutating the source data.
+function makeRosterPlayer(player) {
+  const eraKey  = state.currentEra?.key;
+  const eraStats = getEraStats(player, eraKey);
+  if (!eraStats) return player;
+
+  // Clamp the player's active years to the era window so eraFactor() in the
+  // model picks the correct scoring-environment midpoint.
+  const eraFrom = Math.max(player.from, state.currentEra.from);
+  const eraTo   = Math.min(player.to,   state.currentEra.to);
+  return Object.assign({}, player, {
+    _eraKey: eraKey,
+    stats: eraStats,
+    from: eraFrom,
+    to: eraTo,
+  });
+}
+
 function toggleSameTeams() {
   state.sameTeamsChallenge = !state.sameTeamsChallenge;
   const btn = document.getElementById('sameTeamsToggle');
@@ -376,7 +401,7 @@ function onSlotDrop(event, targetPos) {
         return;
       }
     }
-    state.roster[targetPos] = player;
+    state.roster[targetPos] = makeRosterPlayer(player);
     drag.type = null; drag.playerId = null; drag.fromPos = null;
     advanceAfterPick();
 
@@ -663,6 +688,7 @@ function renderPlayerList() {
     const posLabel = p.positions.join(' · ');
     const salary = state.salaryCapMode ? playerSalary(p) : null;
     const salaryBadge = salary ? `<div class="salary-badge salary-${salary}">$${salary}</div>` : '';
+    const ds = getEraStats(p, state.currentEra?.key) ?? p.stats; // era-specific display stats
 
     // Show position pips: player's positions with open/filled state
     const pips = p.positions.map(pos => {
@@ -685,11 +711,11 @@ function renderPlayerList() {
           ${salaryBadge}
           ${state.ballKnowledge && !salary ? '<div class="stat-hidden">🧠</div>' : ''}
           ${!state.ballKnowledge ? `
-          <div class="stat"><span>${p.stats.ppg.toFixed(1)}</span><small>PPG</small></div>
-          <div class="stat"><span>${p.stats.rpg.toFixed(1)}</span><small>RPG</small></div>
-          <div class="stat"><span>${p.stats.apg.toFixed(1)}</span><small>APG</small></div>
-          <div class="stat"><span>${p.stats.spg.toFixed(1)}</span><small>SPG</small></div>
-          <div class="stat"><span>${p.stats.bpg.toFixed(1)}</span><small>BPG</small></div>` : ''}
+          <div class="stat"><span>${ds.ppg.toFixed(1)}</span><small>PPG</small></div>
+          <div class="stat"><span>${ds.rpg.toFixed(1)}</span><small>RPG</small></div>
+          <div class="stat"><span>${ds.apg.toFixed(1)}</span><small>APG</small></div>
+          <div class="stat"><span>${ds.spg.toFixed(1)}</span><small>SPG</small></div>
+          <div class="stat"><span>${ds.bpg.toFixed(1)}</span><small>BPG</small></div>` : ''}
         </div>
       </div>
     `;
@@ -735,7 +761,7 @@ function quickPlace(playerId) {
     }
   }
 
-  state.roster[target] = player;
+  state.roster[target] = makeRosterPlayer(player);
   advanceAfterPick();
 }
 
