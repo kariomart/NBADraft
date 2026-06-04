@@ -474,9 +474,15 @@ function spinWheel() {
   const sq = state.challenge?.payload?.sq;
   let chosen;
   if (sq && sq[state.round - 1]) {
-    const f = sq[state.round - 1];
-    const team = TEAMS.find(t => t.id === f.t);
-    if (team) chosen = { team, era: { key: f.ek, label: f.el, from: f.ef, to: f.et } };
+    const [ti, ei] = sq[state.round - 1];
+    const team = TEAMS[ti];
+    const era = ei < ERAS.length ? ERAS[ei] : {
+      key: 'custom',
+      label: `${state.challenge.payload.f}–${state.challenge.payload.t}`,
+      from: state.challenge.payload.f,
+      to: state.challenge.payload.t,
+    };
+    if (team) chosen = { team, era };
   }
   if (!chosen) {
     if (!combos.length) { endGame(); return; }
@@ -806,7 +812,7 @@ function showCoachList() {
   const cq = state.challenge?.payload?.cq;
   let list;
   if (cq && Array.isArray(cq)) {
-    list = cq.map(id => COACHES.find(c => c.id === id)).filter(Boolean);
+    list = cq.map(idx => COACHES[idx]).filter(Boolean);
   } else {
     list = COACHES.slice().sort(() => Math.random() - 0.5).slice(0, 5);
   }
@@ -1062,8 +1068,13 @@ function encodeTeam(roster, name) {
     e: state.selectedEras.slice(),
     b: state.ballKnowledge ? 1 : 0,                      // ball-knowledge mode
     sc: state.salaryCapMode ? 1 : 0,                     // salary cap mode
-    sq: state.sameTeamsChallenge ? state.draftHistory : undefined,   // mirror draft history
-    cq: state.sameTeamsChallenge ? state.coachOptions.map(c => c.id) : undefined, // mirror coach pool
+    // mirror draft: compact [teamIdx, eraIdx] pairs + coach indices
+    sq: state.sameTeamsChallenge ? state.draftHistory.map(e => {
+      const ti = TEAMS.findIndex(t => t.id === e.t);
+      const ei = ERAS.findIndex(era => era.key === e.ek);
+      return [ti, ei >= 0 ? ei : 6];   // 6 = custom era (use payload.f/t)
+    }) : undefined,
+    cq: state.sameTeamsChallenge ? state.coachOptions.map(c => COACHES.findIndex(ch => ch.id === c.id)) : undefined,
     dv: PLAYERS.length,                                  // dataset size (soft check)
     p: FILL_ORDER.map(pos => (roster[pos] ? roster[pos].id : 0)),
     c: state.coach ? state.coach.id : null,              // coach id
