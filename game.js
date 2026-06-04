@@ -16,6 +16,7 @@ const state = {
   searchQuery: '',
   usedTeams: [],
   ballKnowledge: false,   // hide all stats during the draft, reveal at the end
+  salaryCapMode: false,   // players cost $1–$5; stay under the $15 cap
   selectedEras: [],       // multi-select era tags driving yearFrom/yearTo
   challenge: null,        // an opponent team loaded from a challenge code
   coach: null,            // selected after the roster is full
@@ -67,7 +68,7 @@ function renderSetup() {
       ${locked ? `
       <div class="challenge-banner">
         <div class="challenge-banner-main">⚔️ Challenge from <strong>${state.challenge.name}</strong></div>
-        <div class="challenge-banner-sub">Era locked to ${state.yearFrom}–${state.yearTo}${state.ballKnowledge ? ' · 🧠 Ball Knowledge ON' : ''} · draft your five, then face their team in a 7-game series.</div>
+        <div class="challenge-banner-sub">Era locked to ${state.yearFrom}–${state.yearTo}${state.ballKnowledge ? ' · 🧠 Ball Knowledge ON' : ''}${state.salaryCapMode ? ' · 💰 Salary Cap ON ($15)' : ''} · draft your five, then face their team in a 7-game series.</div>
         <button class="btn-ghost" onclick="clearChallenge()">Cancel challenge</button>
       </div>` : ''}
 
@@ -92,6 +93,14 @@ function renderSetup() {
         <span class="mode-toggle-text">
           <span class="mode-toggle-title">🧠 Ball Knowledge Mode</span>
           <span class="mode-toggle-sub">${locked ? 'Locked by challenge to match your opponent' : 'Stats hidden while drafting — pick on name & gut alone'}</span>
+        </span>
+      </button>
+
+      <button class="mode-toggle ${state.salaryCapMode ? 'on' : ''} ${locked ? 'locked' : ''}" id="scToggle" ${locked ? '' : 'onclick="toggleSalaryCap()"'}>
+        <span class="mode-toggle-switch"><span class="mode-toggle-knob"></span></span>
+        <span class="mode-toggle-text">
+          <span class="mode-toggle-title">💰 Salary Cap Mode</span>
+          <span class="mode-toggle-sub">${locked ? 'Locked by challenge to match your opponent' : 'Players cost $1–$5 based on talent. Stay under the $15 cap.'}</span>
         </span>
       </button>
 
@@ -124,6 +133,44 @@ function renderSetup() {
 function toggleBallKnowledge() {
   state.ballKnowledge = !state.ballKnowledge;
   document.getElementById('bkToggle').classList.toggle('on', state.ballKnowledge);
+}
+
+function toggleSalaryCap() {
+  state.salaryCapMode = !state.salaryCapMode;
+  const btn = document.getElementById('scToggle');
+  if (btn) btn.classList.toggle('on', state.salaryCapMode);
+}
+
+// PER-based salary tiers: $5 elite → $1 fringe
+function playerSalary(player) {
+  if (player.per >= 26) return 5;
+  if (player.per >= 21) return 4;
+  if (player.per >= 17) return 3;
+  if (player.per >= 13) return 2;
+  return 1;
+}
+
+function rosterCapUsed() {
+  return FILL_ORDER.reduce((sum, pos) => {
+    const p = state.roster[pos];
+    return sum + (p ? playerSalary(p) : 0);
+  }, 0);
+}
+
+function updateCapDisplay() {
+  const el = document.getElementById('capTracker');
+  if (!el) return;
+  const used = rosterCapUsed();
+  const remaining = 15 - used;
+  const pct = Math.min((used / 15) * 100, 100);
+  const tight = remaining <= 3;
+  el.innerHTML = `
+    <div class="cap-tracker-row">
+      <span class="cap-tracker-label">💰 Salary Cap</span>
+      <span class="cap-tracker-value${tight ? ' cap-tight' : ''}">$${remaining} left · $${used}/$15</span>
+    </div>
+    <div class="cap-bar"><div class="cap-bar-fill${tight ? ' cap-bar-danger' : ''}" style="width:${pct}%"></div></div>
+  `;
 }
 
 // Toggle an era tag, then span the active window across all selected eras.
@@ -192,6 +239,7 @@ function renderDraftScreen() {
             </div>
             <div class="players-count" id="playersCount"></div>
             ${state.ballKnowledge ? '<div class="drag-hint bk-hint">🧠 Ball Knowledge Mode — stats revealed at the end. Trust your gut.</div>' : '<div class="drag-hint">Drag a player to a matching position slot →</div>'}
+            ${state.salaryCapMode ? '<div id="capTracker" class="cap-tracker"></div>' : ''}
             <div class="player-list" id="playerList"></div>
           </div>
         </div>
@@ -304,6 +352,17 @@ function onSlotDrop(event, targetPos) {
       flashInvalid(targetPos);
       return;
     }
+    if (state.salaryCapMode) {
+      const salary = playerSalary(player);
+      const remaining = 15 - rosterCapUsed();
+      const otherOpenCount = getOpenPositions().filter(p => p !== targetPos).length;
+      if (salary + otherOpenCount > remaining) {
+        flashInvalid(targetPos);
+        const ct = document.getElementById('capTracker');
+        if (ct) { ct.classList.add('cap-flash'); ct.addEventListener('animationend', () => ct.classList.remove('cap-flash'), { once: true }); }
+        return;
+      }
+    }
     state.roster[targetPos] = player;
     drag.type = null; drag.playerId = null; drag.fromPos = null;
     advanceAfterPick();
@@ -392,7 +451,10 @@ function spinWheel() {
   // Only land on (team, era) combos that actually have eligible players.
   const combos = [];
   availableTeams.forEach(t => eras.forEach(e => {
-    if (getPlayersForTeam(t.id, e.from, e.to).length >= 5) combos.push({ team: t, era: e });
+    const players = getPlayersForTeam(t.id, e.from, e.to);
+    if (players.length < 5) return;
+    if (state.salaryCapMode && !players.some(p => playerCanFill(p))) return;
+    combos.push({ team: t, era: e });
   }));
   if (!combos.length) { endGame(); return; }
 
@@ -479,20 +541,25 @@ function rerollDial(which) {
     state.rerollTeam--;
     // Return old team to the pool, pick a new one.
     state.usedTeams = state.usedTeams.filter(id => id !== state.currentTeam.id);
-    const freshTeams = TEAMS.filter(t =>
-      !state.usedTeams.includes(t.id) &&
-      t.id !== state.currentTeam.id &&
-      getPlayersForTeam(t.id, state.currentEra.from, state.currentEra.to).length >= 5
-    );
+    const freshTeams = TEAMS.filter(t => {
+      if (state.usedTeams.includes(t.id) || t.id === state.currentTeam.id) return false;
+      const players = getPlayersForTeam(t.id, state.currentEra.from, state.currentEra.to);
+      if (players.length < 5) return false;
+      if (state.salaryCapMode && !players.some(p => playerCanFill(p))) return false;
+      return true;
+    });
     if (!freshTeams.length) { state.spinning = false; updateRerollButtons(); return; }
     newTeam = freshTeams[Math.floor(Math.random() * freshTeams.length)];
     state.usedTeams.push(newTeam.id);
   } else {
     state.rerollEra--;
-    const freshEras = eras.filter(e =>
-      e.key !== state.currentEra.key &&
-      getPlayersForTeam(state.currentTeam.id, e.from, e.to).length >= 5
-    );
+    const freshEras = eras.filter(e => {
+      if (e.key === state.currentEra.key) return false;
+      const players = getPlayersForTeam(state.currentTeam.id, e.from, e.to);
+      if (players.length < 5) return false;
+      if (state.salaryCapMode && !players.some(p => playerCanFill(p))) return false;
+      return true;
+    });
     if (!freshEras.length) { state.spinning = false; updateRerollButtons(); return; }
     newEra = freshEras[Math.floor(Math.random() * freshEras.length)];
   }
@@ -566,6 +633,8 @@ function renderPlayerList() {
   listEl.innerHTML = filtered.map(p => {
     const canFill = playerCanFill(p);
     const posLabel = p.positions.join(' · ');
+    const salary = state.salaryCapMode ? playerSalary(p) : null;
+    const salaryBadge = salary ? `<div class="salary-badge salary-${salary}">$${salary}</div>` : '';
 
     // Show position pips: player's positions with open/filled state
     const pips = p.positions.map(pos => {
@@ -584,20 +653,21 @@ function renderPlayerList() {
           <div class="player-meta"><span class="player-pos">${posLabel}</span> · ${p.from}–${p.to}</div>
           <div class="player-pips">${pips}</div>
         </div>
-        ${state.ballKnowledge ? `
-        <div class="player-stats hidden-stats">
-          <div class="stat-hidden">🧠</div>
-        </div>` : `
-        <div class="player-stats">
+        <div class="player-stats${state.ballKnowledge ? ' hidden-stats' : ''}">
+          ${salaryBadge}
+          ${state.ballKnowledge && !salary ? '<div class="stat-hidden">🧠</div>' : ''}
+          ${!state.ballKnowledge ? `
           <div class="stat"><span>${p.stats.ppg.toFixed(1)}</span><small>PPG</small></div>
           <div class="stat"><span>${p.stats.rpg.toFixed(1)}</span><small>RPG</small></div>
           <div class="stat"><span>${p.stats.apg.toFixed(1)}</span><small>APG</small></div>
           <div class="stat"><span>${p.stats.spg.toFixed(1)}</span><small>SPG</small></div>
-          <div class="stat"><span>${p.stats.bpg.toFixed(1)}</span><small>BPG</small></div>
-        </div>`}
+          <div class="stat"><span>${p.stats.bpg.toFixed(1)}</span><small>BPG</small></div>` : ''}
+        </div>
       </div>
     `;
   }).join('');
+
+  updateCapDisplay();
 }
 
 function getOpenPositions() {
@@ -605,7 +675,16 @@ function getOpenPositions() {
 }
 
 function playerCanFill(player) {
-  return getOpenPositions().some(pos => player.positions.includes(pos));
+  const openPositions = getOpenPositions();
+  if (!openPositions.some(pos => player.positions.includes(pos))) return false;
+  if (state.salaryCapMode) {
+    const salary = playerSalary(player);
+    const remaining = 15 - rosterCapUsed();
+    // Other open slots each need at least $1 minimum
+    const otherSlotsMin = openPositions.length - 1;
+    if (salary + otherSlotsMin > remaining) return false;
+  }
+  return true;
 }
 
 // Click (no drag) → drop the player into their first eligible OPEN position,
@@ -616,6 +695,17 @@ function quickPlace(playerId) {
 
   const target = player.positions.find(pos => !state.roster[pos]);
   if (!target) return;   // none of their positions are open — ignore the click
+
+  if (state.salaryCapMode) {
+    const salary = playerSalary(player);
+    const remaining = 15 - rosterCapUsed();
+    const otherSlotsMin = getOpenPositions().length - 1;
+    if (salary + otherSlotsMin > remaining) {
+      const ct = document.getElementById('capTracker');
+      if (ct) { ct.classList.add('cap-flash'); ct.addEventListener('animationend', () => ct.classList.remove('cap-flash'), { once: true }); }
+      return;
+    }
+  }
 
   state.roster[target] = player;
   advanceAfterPick();
@@ -643,6 +733,7 @@ function setSearch(val) {
 // ── After placing a pick ──────────────────────────────────────────────────────
 function advanceAfterPick() {
   updateCourt();
+  updateCapDisplay();
 
   const allFilled = FILL_ORDER.every(pos => state.roster[pos]);
   if (allFilled || state.round >= state.totalRounds) {
@@ -760,12 +851,13 @@ function endGame() {
 
   const rosterHtml = ev.contributions.map(c => {
     const p = c.player;
+    const salaryStr = state.salaryCapMode && p ? `<span class="salary-badge salary-${playerSalary(p)} result-salary">$${playerSalary(p)}</span> ` : '';
     return `
       <div class="result-player">
         <div class="result-pos">${c.pos}</div>
         <div class="result-player-info">
           ${p
-            ? `<div class="result-player-name">${p.name}</div>
+            ? `<div class="result-player-name">${salaryStr}${p.name}</div>
                <div class="result-player-stats">${p.stats.ppg} PPG · ${p.stats.rpg} RPG · ${p.stats.apg} APG · ${p.ts}% TS</div>`
             : `<div class="result-player-name empty">— Empty —</div>`}
         </div>
@@ -775,6 +867,9 @@ function endGame() {
       </div>
     `;
   }).join('');
+  const capSummaryHtml = state.salaryCapMode
+    ? `<div class="cap-summary">💰 Total salary: $${rosterCapUsed()} / $15 cap</div>`
+    : '';
 
   document.getElementById('app').innerHTML = `
     <div class="result-screen">
@@ -836,6 +931,7 @@ function endGame() {
           })() : ''}
           <div class="roster-divider"></div>
           ${rosterHtml}
+          ${capSummaryHtml}
         </div>
       </div>
 
@@ -920,6 +1016,7 @@ function encodeTeam(roster, name) {
     f: state.yearFrom, t: state.yearTo,
     e: state.selectedEras.slice(),
     b: state.ballKnowledge ? 1 : 0,                      // ball-knowledge mode
+    sc: state.salaryCapMode ? 1 : 0,                     // salary cap mode
     dv: PLAYERS.length,                                  // dataset size (soft check)
     p: FILL_ORDER.map(pos => (roster[pos] ? roster[pos].id : 0)),
     c: state.coach ? state.coach.id : null,              // coach id
@@ -985,6 +1082,7 @@ function applyChallenge(dec) {
   state.yearTo = dec.payload.t;
   state.selectedEras = Array.isArray(dec.payload.e) ? dec.payload.e : [];
   state.ballKnowledge = !!dec.payload.b;
+  state.salaryCapMode = !!dec.payload.sc;
 }
 
 function loadChallenge() {
