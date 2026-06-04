@@ -19,6 +19,7 @@ const state = {
   salaryCapMode: false,   // players cost $1–$5; stay under the $15 cap
   sameTeamsChallenge: false, // encode draft history so opponent gets same teams/eras
   draftHistory: [],       // [{t,ef,et,ek,el}] — one entry per round, filled as picks are made
+  coachOptions: [],       // the 5 coaches shown during coach pick (for mirror draft)
   selectedEras: [],       // multi-select era tags driving yearFrom/yearTo
   challenge: null,        // an opponent team loaded from a challenge code
   coach: null,            // selected after the roster is full
@@ -204,6 +205,7 @@ function startGame() {
   state.rerollEra = 1;
   state.coach = null;
   state.draftHistory = [];
+  state.coachOptions = [];
   state.sameTeamsChallenge = false;
   renderDraftScreen();
   spinWheel();
@@ -800,9 +802,15 @@ function spinCoachRound() {
 function showCoachList() {
   state.phase = 'pick';
 
-  // Pick 5 random coaches from the full pool
-  const shuffled = COACHES.slice().sort(() => Math.random() - 0.5);
-  const list   = shuffled.slice(0, 5);
+  // Use forced coach list from mirror challenge, or pick 5 random
+  const cq = state.challenge?.payload?.cq;
+  let list;
+  if (cq && Array.isArray(cq)) {
+    list = cq.map(id => COACHES.find(c => c.id === id)).filter(Boolean);
+  } else {
+    list = COACHES.slice().sort(() => Math.random() - 0.5).slice(0, 5);
+  }
+  state.coachOptions = list;
   const header = 'Pick Your Coach';
 
   const area = document.getElementById('playerListArea');
@@ -1054,7 +1062,8 @@ function encodeTeam(roster, name) {
     e: state.selectedEras.slice(),
     b: state.ballKnowledge ? 1 : 0,                      // ball-knowledge mode
     sc: state.salaryCapMode ? 1 : 0,                     // salary cap mode
-    sq: state.sameTeamsChallenge ? state.draftHistory : undefined, // mirror draft history
+    sq: state.sameTeamsChallenge ? state.draftHistory : undefined,   // mirror draft history
+    cq: state.sameTeamsChallenge ? state.coachOptions.map(c => c.id) : undefined, // mirror coach pool
     dv: PLAYERS.length,                                  // dataset size (soft check)
     p: FILL_ORDER.map(pos => (roster[pos] ? roster[pos].id : 0)),
     c: state.coach ? state.coach.id : null,              // coach id
