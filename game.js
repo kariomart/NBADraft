@@ -581,7 +581,7 @@ function renderPlayerList() {
            ondragend="onDragEnd(event)">
         <div class="player-info">
           <div class="player-name">${p.name}</div>
-          <div class="player-meta"><span class="player-pos">${posLabel}</span> · ${p.peak_years[0]}–${p.peak_years[1]}</div>
+          <div class="player-meta"><span class="player-pos">${posLabel}</span> · ${p.from}–${p.to}</div>
           <div class="player-pips">${pips}</div>
         </div>
         ${state.ballKnowledge ? `
@@ -695,7 +695,7 @@ function showCoachList() {
         const famPos = FILL_ORDER.filter(pos => {
           const p = state.roster[pos];
           return p && c.tenures.some(t =>
-            p.team === t.team && p.peak_years[0] <= t.to && p.peak_years[1] >= t.from
+            p.team === t.team && p.from <= t.to && p.to >= t.from
           );
         });
         const famBadge = famPos.length > 0

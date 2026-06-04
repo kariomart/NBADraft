@@ -59,9 +59,8 @@ const MODEL = (() => {
   // Multiplier applied to a player's raw counting stats, keyed off the midpoint
   // of their peak. >1 boosts low-scoring-era production; <1 trims inflated eras.
   function eraFactor(player) {
-    const yrs = player.peak_years;
-    if (!yrs) return 1.0;                                  // REPLACEMENT, etc.
-    const mid = clamp(Math.round((yrs[0] + yrs[1]) / 2), ERA_MIN, ERA_MAX);
+    if (player.from == null) return 1.0;                   // REPLACEMENT, etc.
+    const mid = clamp(Math.round((player.from + player.to) / 2), ERA_MIN, ERA_MAX);
     const env = LEAGUE_ENV[mid] || REFERENCE_ENV;
     return REFERENCE_ENV / env;
   }
@@ -145,8 +144,8 @@ const MODEL = (() => {
         const p = l.player;
         const familiar = coach.tenures.some(t =>
           p.team === t.team &&
-          p.peak_years[0] <= t.to &&
-          p.peak_years[1] >= t.from
+          p.from <= t.to &&
+          p.to >= t.from
         );
         if (familiar) familiarPositions.push(l.pos);
       });

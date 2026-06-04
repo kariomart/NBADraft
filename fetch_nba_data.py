@@ -392,7 +392,8 @@ for pid in qualified_ids:
         "name":        name,
         "team":        team,
         "positions":   positions,
-        "peak_years":  peak_years,
+        "from":        peak_years[0],
+        "to":          peak_years[1],
         "stats": {
             "ppg": ps["ppg"],
             "rpg": ps["rpg"],
