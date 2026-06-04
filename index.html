@@ -23,16 +23,11 @@
 </head>
 <body>
   <div id="app"></div>
+  <div id="kofi-footer" style="text-align:center;padding:16px 0 24px;background:#0f1117;">
+    <script type='text/javascript' src='https://storage.ko-fi.com/cdn/widget/Widget_2.js'></script>
+    <script type='text/javascript'>kofiwidget2.init('Support me on Ko-fi', '#000000', 'W0W320T7E4');kofiwidget2.draw();</script>
+  </div>
   <script src="https://unpkg.com/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
-  <script src='https://storage.ko-fi.com/cdn/scripts/overlay-widget.js'></script>
-  <script>
-    kofiWidgetOverlay.draw('kariomart', {
-      'type': 'floating-chat',
-      'floating-chat.donateButton.text': 'Tip Me',
-      'floating-chat.donateButton.background-color': '#ffffff',
-      'floating-chat.donateButton.text-color': '#323842'
-    });
-  </script>
   <script src="data.js"></script>
   <script src="api_players.js"></script>
   <script src="model.js"></script>
