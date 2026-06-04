@@ -299,7 +299,7 @@ input, select { font-family: inherit; }
 }
 
 .wheel-spinner.spinning {
-  animation: spin-pulse 0.08s linear infinite;
+  animation: spin-pulse 0.04s linear infinite;
 }
 
 @keyframes spin-pulse {
@@ -342,7 +342,7 @@ input, select { font-family: inherit; }
 }
 
 .dial-spinner.era { font-size: 15px; }
-.dial-spinner.spinning { animation: spin-pulse 0.08s linear infinite; }
+.dial-spinner.spinning { animation: spin-pulse 0.04s linear infinite; }
 
 .dial-cap {
   font-size: 10px;
@@ -1157,6 +1157,21 @@ input, select { font-family: inherit; }
 .era-presets.locked .preset-btn { cursor: default; }
 
 /* ── Head-to-head series result ─────────────────────────────────────────────── */
+.series-narrative {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px 20px;
+  margin-bottom: 16px;
+}
+.series-narrative-p {
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--text-muted);
+  margin: 0;
+}
+.series-narrative-p strong { color: var(--text); }
+
 .h2h-banner {
   width: 100%;
   background: var(--surface);
@@ -1254,6 +1269,10 @@ input, select { font-family: inherit; }
 .h2h-stats { font-size: 10px; color: var(--text-muted); }
 .h2h-ws { font-size: 10px; font-weight: 700; color: var(--accent); flex-shrink: 0; white-space: nowrap; }
 
+/* Coach row in result roster (sits above the players) */
+.coach-result-row { margin-bottom: 4px; }
+.roster-divider { height: 1px; background: var(--border); margin: 8px 0 10px; }
+
 /* Archetype on regular result screen */
 .result-archetype { font-size: 13px; font-weight: 800; color: var(--accent2); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 2px; }
 .result-archetype-desc { font-size: 12px; color: var(--text-muted); font-style: italic; margin-bottom: 6px; line-height: 1.4; max-width: 280px; }
@@ -1271,40 +1290,21 @@ input, select { font-family: inherit; }
 .h2h-coach { font-size: 11px; color: var(--text-muted); margin-bottom: 4px; }
 .h2h-coach em { color: var(--accent2); font-style: normal; font-weight: 700; }
 
-/* ── Coach Picker Screen ─────────────────────────────────────────────────── */
-.coach-screen {
-  display: flex; flex-direction: column;
-  min-height: 100vh; padding: 24px;
-  max-width: 900px; margin: 0 auto;
+/* ── Coach List (inside left panel) ─────────────────────────────────────── */
+.coach-list-hdr {
+  font-size: 13px; font-weight: 700; color: var(--text-muted);
+  padding: 10px 12px 6px; border-bottom: 1px solid var(--border);
 }
+.coach-list-hdr strong { color: var(--text); }
 
-.coach-header { margin-bottom: 24px; }
-.coach-header h2 { font-size: 26px; font-weight: 900; margin-bottom: 4px; }
-.coach-sub { color: var(--text-muted); font-size: 14px; margin-bottom: 16px; }
+.coach-list-inner { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; }
 
-.coach-roster-bar {
-  display: flex; gap: 8px; flex-wrap: wrap;
-}
-.coach-roster-slot {
-  display: flex; flex-direction: column; align-items: center;
+.coach-list-card {
   background: var(--surface); border: 1px solid var(--border);
-  border-radius: 8px; padding: 6px 12px; min-width: 52px;
-}
-.coach-roster-pos { font-size: 10px; font-weight: 800; color: var(--accent2); }
-.coach-roster-name { font-size: 12px; font-weight: 600; }
-
-.coach-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: 12px;
-}
-
-.coach-card {
-  background: var(--surface); border: 1px solid var(--border);
-  border-radius: 12px; padding: 14px;
+  border-radius: 10px; padding: 12px;
   cursor: pointer; transition: border-color 0.2s, background 0.2s;
 }
-.coach-card:hover {
+.coach-list-card:hover {
   border-color: var(--accent2);
   background: rgba(251, 146, 60, 0.06);
 }
@@ -1313,22 +1313,17 @@ input, select { font-family: inherit; }
   display: flex; justify-content: space-between; align-items: flex-start;
   margin-bottom: 6px;
 }
-.coach-card-name { font-size: 14px; font-weight: 800; }
-.coach-card-style { font-size: 11px; color: var(--accent2); font-weight: 700; margin-top: 2px; }
+.coach-card-name { font-size: 13px; font-weight: 800; }
+.coach-card-style { font-size: 11px; color: var(--accent2); font-weight: 700; margin-top: 1px; }
 .coach-card-mods { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; flex-shrink: 0; }
-.coach-mod { font-size: 12px; font-weight: 800; }
+.coach-mod { font-size: 11px; font-weight: 800; }
 
 .coach-fam {
   font-size: 11px; font-weight: 700; color: #facc15;
   background: rgba(250, 204, 21, 0.1); border: 1px solid rgba(250, 204, 21, 0.3);
-  border-radius: 6px; padding: 3px 8px; margin-bottom: 6px;
+  border-radius: 6px; padding: 2px 8px; margin-bottom: 6px; display: inline-block;
 }
 .coach-card-note { font-size: 11px; color: var(--text-muted); line-height: 1.5; }
-
-@media (max-width: 768px) {
-  .coach-screen { padding: 16px; }
-  .coach-grid { grid-template-columns: 1fr; }
-}
 
 .h2h-vs {
   align-self: center;

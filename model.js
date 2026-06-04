@@ -31,32 +31,83 @@ const MODEL = (() => {
     per: 9.0, ws48: 0.030, ts: 50.0,
   };
 
+  // ── Era normalization ──────────────────────────────────────────────────────
+  // Raw counting stats (ppg/rpg/apg/spg/bpg) inflate or deflate with each
+  // season's league scoring environment — a function of pace AND the rules of
+  // the day (hand-checking, illegal defense, the 3-point boom). League points
+  // per team per game swing from ~92 in the late-'90s/2000s "dead-ball" era to
+  // ~114 today, so a 22 PPG scorer then was far more impressive than 22 PPG now.
+  // We normalize each player's counting stats to a common modern baseline.
+  //
+  // NOTE: per / ws48 / ts are already league-relative by construction (PER avg
+  // is always 15, WS/48 ~0.100, TS measured vs. that season), so they are left
+  // untouched here — only the raw volume stats get the era factor.
+  const LEAGUE_ENV = {
+    1973:107.6,1974:105.7,1975:104.4,1976:104.3,1977:106.5,1978:108.5,1979:110.3,
+    1980:110.3,1981:108.6,1982:108.6,1983:108.5,1984:110.1,1985:110.8,1986:110.2,
+    1987:109.9,1988:108.2,1989:109.2,1990:107.0,1991:106.3,1992:105.3,1993:105.3,
+    1994:101.5,1995:101.4,1996: 99.5,1997: 96.9,1998: 95.6,1999: 91.6,2000: 97.5,
+    2001: 94.8,2002: 95.5,2003: 95.1,2004: 93.4,2005: 97.2,2006: 97.0,2007: 98.7,
+    2008: 99.9,2009:100.0,2010:100.4,2011: 99.6,2012: 96.3,2013: 98.1,2014:101.0,
+    2015:100.0,2016:102.7,2017:105.6,2018:106.3,2019:111.2,2020:111.8,2021:112.1,
+    2022:110.6,2023:114.7,2024:114.2,
+  };
+  const ERA_MIN = 1973, ERA_MAX = 2024;
+  // Anchor: the modern (2019–2024) scoring environment ≈ 112.4 pts/team/game.
+  const REFERENCE_ENV = 112.4;
+
+  // Multiplier applied to a player's raw counting stats, keyed off the midpoint
+  // of their peak. >1 boosts low-scoring-era production; <1 trims inflated eras.
+  function eraFactor(player) {
+    const yrs = player.peak_years;
+    if (!yrs) return 1.0;                                  // REPLACEMENT, etc.
+    const mid = clamp(Math.round((yrs[0] + yrs[1]) / 2), ERA_MIN, ERA_MAX);
+    const env = LEAGUE_ENV[mid] || REFERENCE_ENV;
+    return REFERENCE_ENV / env;
+  }
+
   // ── Main entry point ───────────────────────────────────────────────────────
   function evaluateTeam(roster, coach = null) {
     const slots = ['PG', 'SG', 'SF', 'PF', 'C'];
     const lineup = slots.map(pos => ({ pos, player: roster[pos] || REPLACEMENT }));
-    const players = lineup.map(l => l.player);
 
-    // ── Aggregate raw inputs ──────────────────────────────────────────────────
-    const sum = key => players.reduce((t, p) => t + p.stats[key], 0);
+    // Era-normalized view used for ALL stat math below. We never mutate the
+    // original player objects — the UI reads their raw stats off `contributions`
+    // and the player cards, and those should stay as the real career numbers.
+    const elineup = lineup.map(l => {
+      const f = eraFactor(l.player), s = l.player.stats;
+      return {
+        pos: l.pos,
+        positions: l.player.positions,
+        per: l.player.per, ws48: l.player.ws48, ts: l.player.ts,
+        stats: {
+          ppg: s.ppg * f, rpg: s.rpg * f, apg: s.apg * f,
+          spg: s.spg * f, bpg: s.bpg * f,
+        },
+      };
+    });
+    const eplayers = elineup;
+
+    // ── Aggregate raw inputs (era-normalized) ─────────────────────────────────
+    const sum = key => eplayers.reduce((t, p) => t + p.stats[key], 0);
     const sumPPG = sum('ppg'), sumAPG = sum('apg'), sumRPG = sum('rpg');
     const sumSPG = sum('spg'), sumBPG = sum('bpg');
 
-    const avgPER = players.reduce((t, p) => t + p.per, 0) / players.length;
-    const avgWS48 = players.reduce((t, p) => t + p.ws48, 0) / players.length;
-    const maxPER = Math.max(...players.map(p => p.per));
+    const avgPER = eplayers.reduce((t, p) => t + p.per, 0) / eplayers.length;
+    const avgWS48 = eplayers.reduce((t, p) => t + p.ws48, 0) / eplayers.length;
+    const maxPER = Math.max(...eplayers.map(p => p.per));
 
     // Volume-weighted team True Shooting — efficient stars count more.
     const wTS = sumPPG > 0
-      ? players.reduce((t, p) => t + p.ts * p.stats.ppg, 0) / sumPPG
+      ? eplayers.reduce((t, p) => t + p.ts * p.stats.ppg, 0) / sumPPG
       : LEAGUE.TS;
 
     // ── Fit factors ────────────────────────────────────────────────────────────
-    const spacers = players.filter(p => p.ts >= 55).length;
+    const spacers = eplayers.filter(p => p.ts >= 55).length;
     const spacingAdj = clamp((spacers - 3) * 0.9, -3.0, 2.5);
 
     // Usage clash: only ONE ball. Secondary ball-dominant scorers cost efficiency.
-    const ballLoads = players
+    const ballLoads = eplayers
       .map(p => p.stats.ppg + 0.6 * p.stats.apg)
       .sort((a, b) => b - a);
     let usageClash = 0;
@@ -71,16 +122,16 @@ const MODEL = (() => {
                        : maxPER >= 21 ? 0.5 : 0.0;
 
     // Rim protection — a shot-blocking big anchors the defense.
-    const bigs = lineup.filter(l => ['PF', 'C'].includes(l.pos)).map(l => l.player);
+    const bigs = elineup.filter(l => ['PF', 'C'].includes(l.pos));
     const rimBonus = clamp(
       Math.max(0, ...bigs.map(p => (p.stats.bpg - 1.0) * 1.0)), 0, 2.0);
 
     // Perimeter stopper — an elite on-ball defender.
-    const maxSPG = Math.max(...players.map(p => p.stats.spg));
+    const maxSPG = Math.max(...eplayers.map(p => p.stats.spg));
     const defStarBonus = maxSPG >= 2.0 ? 0.8 : maxSPG >= 1.6 ? 0.4 : 0.0;
 
     // Undersized center — a small/non-shotblocking C gives up the paint.
-    const centerP = (roster.C || REPLACEMENT);
+    const centerP = elineup.find(l => l.pos === 'C');
     const smallBallPenalty =
       (centerP.stats.rpg < 7 && centerP.stats.bpg < 1.0) ? 1.5 : 0.0;
 
@@ -151,8 +202,8 @@ const MODEL = (() => {
     }));
 
     // ── Sub-grades (0–100) ───────────────────────────────────────────────────────
-    const versatile = players.filter(p => p.positions.length >= 2).length;
-    const twoWay = players.filter(p =>
+    const versatile = eplayers.filter(p => p.positions.length >= 2).length;
+    const twoWay = eplayers.filter(p =>
       (p.stats.spg + p.stats.bpg) >= 1.5 && p.stats.ppg >= 12).length;
 
     const balanceRaw = 50

@@ -12,7 +12,7 @@ const state = {
   spinning: false,
   phase: 'setup',
   posFilter: 'All',
-  sortBy: 'ppg',
+  sortBy: 'name',
   searchQuery: '',
   usedTeams: [],
   ballKnowledge: false,   // hide all stats during the draft, reveal at the end
@@ -189,13 +189,6 @@ function renderDraftScreen() {
                 ${['All','PG','SG','SF','PF','C'].map(p => `<button class="pos-btn ${state.posFilter===p?'active':''}" onclick="setPosFilter('${p}')">${p}</button>`).join('')}
               </div>
               <input class="search-input" id="searchInput" placeholder="Search player..." value="${state.searchQuery}" oninput="setSearch(this.value)">
-              ${state.ballKnowledge ? '' : `
-              <select class="sort-select" onchange="setSort(this.value)">
-                <option value="ppg" ${state.sortBy==='ppg'?'selected':''}>PPG</option>
-                <option value="rpg" ${state.sortBy==='rpg'?'selected':''}>RPG</option>
-                <option value="apg" ${state.sortBy==='apg'?'selected':''}>APG</option>
-                <option value="per" ${state.sortBy==='per'?'selected':''}>PER</option>
-              </select>`}
             </div>
             <div class="players-count" id="playersCount"></div>
             ${state.ballKnowledge ? '<div class="drag-hint bk-hint">🧠 Ball Knowledge Mode — stats revealed at the end. Trust your gut.</div>' : '<div class="drag-hint">Drag a player to a matching position slot →</div>'}
@@ -431,7 +424,7 @@ function spinWheel() {
       state.spinning = false;
       showPlayerPicker(chosen.team, chosen.era);
     }
-  }, 80);
+  }, 40);
 }
 
 // ── Player Picker ─────────────────────────────────────────────────────────────
@@ -536,7 +529,7 @@ function rerollDial(which) {
       state.spinning = false;
       showPlayerPicker(state.currentTeam, state.currentEra);
     }
-  }, 80);
+  }, 40);
 }
 
 function renderPlayerList() {
@@ -556,10 +549,7 @@ function renderPlayerList() {
     // No stat-based ordering — that would leak the very info we're hiding.
     filtered.sort((a, b) => a.name.localeCompare(b.name));
   } else {
-    filtered.sort((a, b) => {
-      if (state.sortBy === 'per') return b.per - a.per;
-      return b.stats[state.sortBy] - a.stats[state.sortBy];
-    });
+    filtered.sort((a, b) => a.name.localeCompare(b.name));
   }
 
   const countEl = document.getElementById('playersCount');
@@ -656,7 +646,7 @@ function advanceAfterPick() {
 
   const allFilled = FILL_ORDER.every(pos => state.roster[pos]);
   if (allFilled || state.round >= state.totalRounds) {
-    setTimeout(renderCoachPicker, 500);
+    setTimeout(spinCoachRound, 500);
     return;
   }
 
@@ -669,66 +659,60 @@ function advanceAfterPick() {
   spinWheel();
 }
 
-// ── Coach Picker ─────────────────────────────────────────────────────────────
-function renderCoachPicker() {
-  state.phase = 'coach';
+// ── Coach Round ───────────────────────────────────────────────────────────────
+function spinCoachRound() {
+  state.phase = 'pick';
 
-  // Compact locked roster bar
-  const rosterBar = FILL_ORDER.map(pos => {
-    const p = state.roster[pos];
-    return `<div class="coach-roster-slot">
-      <span class="coach-roster-pos">${pos}</span>
-      <span class="coach-roster-name">${p ? p.name.split(' ').pop() : '—'}</span>
-    </div>`;
-  }).join('');
+  const roundBadge = document.getElementById('roundBadge');
+  if (roundBadge) roundBadge.textContent = 'Coach';
 
-  // Build familiarity counts for each coach against the current roster
-  const coachCards = COACHES.map(c => {
-    const famPositions = FILL_ORDER.filter(pos => {
-      const p = state.roster[pos];
-      if (!p) return false;
-      return c.tenures.some(t =>
-        p.team === t.team &&
-        p.peak_years[0] <= t.to &&
-        p.peak_years[1] >= t.from
-      );
-    });
-    const famCount = famPositions.length;
+  const eraLabel = document.getElementById('eraLabel');
+  const rb1 = document.getElementById('rerollTeamBtn');
+  const rb2 = document.getElementById('rerollEraBtn');
+  if (eraLabel) eraLabel.textContent = 'COACH';
+  if (rb1) rb1.style.display = 'none';
+  if (rb2) rb2.style.display = 'none';
 
-    const offSign  = c.ortgMod >= 0 ? '+' : '';
-    const defSign  = c.drtgMod <= 0 ? '' : '+';
-    const offColor = c.ortgMod >= 0 ? '#22c55e' : '#ef4444';
-    const defColor = c.drtgMod <= 0 ? '#22c55e' : '#ef4444';
+  showCoachList();
+}
 
-    const famBadge = famCount > 0
-      ? `<div class="coach-fam">★ ${famCount} player${famCount > 1 ? 's' : ''} familiar (+${(famCount * 0.4).toFixed(1)} OFF / ${(famCount * 0.3).toFixed(1)} DEF bonus)</div>`
-      : '';
+function showCoachList() {
+  state.phase = 'pick';
 
-    return `
-      <div class="coach-card" onclick="selectCoach('${c.id}')">
-        <div class="coach-card-head">
-          <div>
-            <div class="coach-card-name">${c.name}</div>
-            <div class="coach-card-style">${c.style}</div>
-          </div>
-          <div class="coach-card-mods">
-            <span class="coach-mod" style="color:${offColor}">OFF ${offSign}${c.ortgMod}</span>
-            <span class="coach-mod" style="color:${defColor}">DEF ${defSign}${c.drtgMod}</span>
-          </div>
-        </div>
-        ${famBadge}
-        <div class="coach-card-note">${c.note}</div>
-      </div>`;
-  }).join('');
+  // Pick 5 random coaches from the full pool
+  const shuffled = COACHES.slice().sort(() => Math.random() - 0.5);
+  const list   = shuffled.slice(0, 5);
+  const header = 'Pick Your Coach';
 
-  document.getElementById('app').innerHTML = `
-    <div class="coach-screen">
-      <div class="coach-header">
-        <h2>Pick Your Coach</h2>
-        <p class="coach-sub">Your roster is set. Choose the coach whose system fits it best.</p>
-        <div class="coach-roster-bar">${rosterBar}</div>
-      </div>
-      <div class="coach-grid">${coachCards}</div>
+  const area = document.getElementById('playerListArea');
+  if (!area) return;
+  area.style.display = '';
+
+  area.innerHTML = `
+    <div class="coach-list-hdr">${header}</div>
+    <div class="coach-list-inner">
+      ${list.map(c => {
+        const famPos = FILL_ORDER.filter(pos => {
+          const p = state.roster[pos];
+          return p && c.tenures.some(t =>
+            p.team === t.team && p.peak_years[0] <= t.to && p.peak_years[1] >= t.from
+          );
+        });
+        const famBadge = famPos.length > 0
+          ? `<div class="coach-fam">★ ${famPos.join(', ')} on your roster</div>`
+          : '';
+        return `
+          <div class="coach-list-card" onclick="selectCoach('${c.id}')">
+            <div class="coach-card-head">
+              <div>
+                <div class="coach-card-name">${c.name}</div>
+                <div class="coach-card-style">${c.style}</div>
+              </div>
+            </div>
+            ${famBadge}
+            <div class="coach-card-note">${c.note}</div>
+          </div>`;
+      }).join('')}
     </div>
   `;
 }
@@ -799,11 +783,6 @@ function endGame() {
           <h1>Your Team</h1>
           <div class="result-archetype">${arch.label}</div>
           <div class="result-archetype-desc">${arch.desc}</div>
-          ${ev.coach ? `<div class="result-coach">
-            <span class="result-coach-name">${ev.coach.name}</span>
-            <span class="result-coach-style">${ev.coach.style}</span>
-            ${ev.familiarPositions.length > 0 ? `<span class="result-coach-fam">★ ${ev.familiarPositions.join(', ')} familiar</span>` : ''}
-          </div>` : ''}
           <div class="record-badge">
             <span class="record-wins">${ev.wins}</span>
             <span class="record-dash">-</span>
@@ -838,7 +817,26 @@ function endGame() {
 
       <div class="result-col">
         <div class="col-title">Starting Five</div>
-        <div class="result-roster">${rosterHtml}</div>
+        <div class="result-roster">
+          ${ev.coach ? (() => {
+            const offSign = ev.coach.ortgMod >= 0 ? '+' : '';
+            const defSign = ev.coach.drtgMod <= 0 ? '' : '+';
+            const famStr  = ev.familiarPositions.length > 0
+              ? ` · ★ ${ev.familiarPositions.join(', ')} familiar`
+              : '';
+            return `
+              <div class="result-player coach-result-row">
+                <div class="result-pos" style="color:var(--accent2)">HC</div>
+                <div class="result-player-info">
+                  <div class="result-player-name">${ev.coach.name}</div>
+                  <div class="result-player-stats">${ev.coach.style} · OFF ${offSign}${ev.coach.ortgMod} / DEF ${defSign}${ev.coach.drtgMod}${famStr}</div>
+                </div>
+                <div class="result-ws"></div>
+              </div>`;
+          })() : ''}
+          <div class="roster-divider"></div>
+          ${rosterHtml}
+        </div>
       </div>
 
       <div class="result-col share-block">
@@ -855,9 +853,50 @@ function endGame() {
       <div class="result-actions">
         <button class="btn-primary" onclick="startGame()">Draft Again</button>
         <button class="btn-ghost" onclick="renderSetup()">Change Era</button>
+        <button class="btn-ghost" id="copyImgBtn" onclick="copyResultImage()">📸 Share</button>
       </div>
     </div>
   `;
+}
+
+// ── Result image share ────────────────────────────────────────────────────────
+async function copyResultImage() {
+  const btn = document.getElementById('copyImgBtn');
+  const el  = document.querySelector('.result-screen');
+  if (!el || !window.html2canvas) return;
+
+  const orig = btn.textContent;
+  btn.textContent = 'Capturing…';
+  btn.disabled = true;
+
+  try {
+    const canvas = await html2canvas(el, {
+      scale: 2,
+      useCORS: true,
+      backgroundColor: '#0a0f09',
+      scrollX: 0,
+      scrollY: -window.scrollY,
+    });
+
+    canvas.toBlob(async blob => {
+      try {
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+        btn.textContent = 'Copied!';
+      } catch {
+        // Clipboard API blocked — fall back to download
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'nba-draft-result.png';
+        a.click();
+        btn.textContent = 'Downloaded!';
+      }
+      setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 2000);
+    }, 'image/png');
+  } catch (e) {
+    btn.textContent = 'Error';
+    btn.disabled = false;
+    setTimeout(() => { btn.textContent = orig; }, 2000);
+  }
 }
 
 // ── Challenge codes ───────────────────────────────────────────────────────────
@@ -1022,6 +1061,80 @@ function teamArchetype(ev, roster) {
   return { label: 'Solid Starting Five', desc: 'A dependable, no-frills lineup that can hang with anyone on a good night.' };
 }
 
+// ── Series narrative ──────────────────────────────────────────────────────────
+function buildSeriesNarrative(evMine, evOpp, series, myName, oppName) {
+  const archMine = teamArchetype(evMine, state.roster);
+  const archOpp  = teamArchetype(evOpp, state.challenge.roster);
+  const iWin     = series.winner === 'A';
+  const winner   = iWin ? myName : oppName;
+  const loser    = iWin ? oppName : myName;
+  const evW      = iWin ? evMine : evOpp;
+  const evL      = iWin ? evOpp : evMine;
+  const wArch    = iWin ? archMine : archOpp;
+  const lArch    = iWin ? archOpp : archMine;
+  const pct      = Math.round(series.pSeriesWinner * 100);
+  const [wGm, lGm] = series.likelyScore.split('-').map(Number);
+  const totalGames = wGm + lGm;
+  const gameWord   = ['four','five','six','seven'][totalGames - 4];
+
+  const lines = [];
+
+  // 1. Series opener
+  if (pct >= 82) {
+    lines.push(`${winner} handles this in ${totalGames === 4 ? 'a sweep' : gameWord} — the gap is too wide for ${loser} to paper over.`);
+  } else if (pct >= 67) {
+    lines.push(`${winner} takes the series in ${gameWord}, though ${loser} forces a couple of uncomfortable moments along the way.`);
+  } else if (pct >= 56) {
+    lines.push(`${winner} survives a hard-fought ${series.likelyScore} — a single bad quarter for ${loser} probably decides it.`);
+  } else {
+    lines.push(`Pick 'em. ${winner} escapes ${series.likelyScore} in what would be an all-timer — any game could go either way.`);
+  }
+
+  // 2. Key statistical matchup
+  const offAdv = evMine.ortg - evOpp.ortg;
+  const defAdv = evOpp.drtg - evMine.drtg;   // positive = my defense is better
+
+  if (Math.abs(offAdv) >= Math.abs(defAdv)) {
+    if (offAdv > 3)
+      lines.push(`The difference is firepower: ${myName}'s offense (${evMine.ortg} ORtg) is significantly more efficient than ${oppName}'s (${evOpp.ortg}), and ${oppName}'s defense can't generate enough stops to keep pace.`);
+    else if (offAdv < -3)
+      lines.push(`${oppName}'s offense (${evOpp.ortg} ORtg) runs ahead of ${myName}'s (${evMine.ortg}) all series long — the pressure to score first and score often tips the balance.`);
+    else
+      lines.push(`Offensively they're well matched (${evMine.ortg} vs ${evOpp.ortg} ORtg), making individual execution in crunch time the real swing factor.`);
+  } else {
+    if (defAdv > 3)
+      lines.push(`${myName}'s defense (${evMine.drtg} DRtg) is the X-factor — ${oppName} will get their buckets, but not at the volume needed to take a series.`);
+    else if (defAdv < -3)
+      lines.push(`${oppName}'s defense (${evOpp.drtg} DRtg) is a buzzsaw. ${myName}'s offense will grind for every point, every single night.`);
+    else
+      lines.push(`Both defenses are stout (${evMine.drtg} vs ${evOpp.drtg} DRtg) — this comes down to who makes the right play when the game is on the line.`);
+  }
+
+  // 3. Style clash
+  if (wArch.label.includes('GOAT') || wArch.label === 'Superteam') {
+    lines.push(`When ${winner} hits their ceiling, this isn't a contest — the sheer firepower of that roster leaves ${loser} scrambling for answers they don't have.`);
+  } else if (lArch.label.includes('GOAT') || lArch.label === 'Superteam') {
+    lines.push(`${loser} has the bigger names, but ${winner}'s system exploits the cracks that star-heavy rosters always leave open.`);
+  } else if ((wArch.label.includes('Grit') || wArch.label.includes('Defensive')) && lArch.label.includes('Pace')) {
+    lines.push(`${winner}'s grind-it-out identity is built to suffocate pace teams — expect brutally slow, physical basketball that the flashier squad despises.`);
+  } else if (lArch.label.includes('Grit') && (wArch.label.includes('Pace') || wArch.label.includes('Ball'))) {
+    lines.push(`${winner} plays at a tempo ${loser} was never built to match — the moment the pace gets pushed, the series is over.`);
+  } else if (wArch.label === 'Glue Guy Collective' || wArch.label === 'Well-Oiled Machine') {
+    lines.push(`${winner} wins on cohesion — no single player is the story, but every one of them shows up, and that togetherness compounds over a seven-game war.`);
+  } else if (lArch.label === 'Glue Guy Collective') {
+    lines.push(`${loser}'s overachieving group keeps this competitive longer than expected, but the talent gap proves insurmountable when it counts.`);
+  }
+
+  // 4. Coach matchup
+  if (evMine.coach && evOpp.coach && evMine.coach.id !== evOpp.coach.id) {
+    lines.push(`On the bench: ${evMine.coach.name} (${evMine.coach.style}) against ${evOpp.coach.name} (${evOpp.coach.style}). The in-series adjustments between Games 3 and 4 could swing the whole thing.`);
+  } else if (evW.coach && !evL.coach) {
+    lines.push(`The coaching advantage belongs firmly to ${winner} — ${evW.coach.name}'s experience showing in the adjustments when the other bench goes quiet.`);
+  }
+
+  return `<p class="series-narrative-p">${lines.join(' ')}</p>`;
+}
+
 // ── Head-to-head result ─────────────────────────────────────────────────────
 function renderHeadToHead(evMine) {
   const evOpp = MODEL.evaluateTeam(state.challenge.roster, state.challenge.coach || null);
@@ -1092,6 +1205,10 @@ function renderHeadToHead(evMine) {
         <div class="h2h-detail">Single game: you win ${myGamePct}% · expected margin ${series.marginA >= 0 ? '+' : ''}${series.marginA} per game</div>
       </div>
 
+      <div class="series-narrative">
+        ${buildSeriesNarrative(evMine, evOpp, series, myName, oppName)}
+      </div>
+
       <div class="h2h-grid">
         ${teamColumn(evMine, myName, true, state.roster)}
         <div class="h2h-vs">VS</div>
@@ -1101,6 +1218,7 @@ function renderHeadToHead(evMine) {
       <div class="result-actions">
         <button class="btn-primary" onclick="startGame()">Rematch (same era)</button>
         <button class="btn-ghost" onclick="clearChallenge()">New Game</button>
+        <button class="btn-ghost" id="copyImgBtn" onclick="copyResultImage()">📸 Share</button>
       </div>
     </div>
   `;
