@@ -642,10 +642,9 @@ function renderPlayerList() {
     filtered = filtered.filter(p => p.name.toLowerCase().includes(q));
   }
   if (state.ballKnowledge) {
-    // No stat-based ordering — that would leak the very info we're hiding.
     filtered.sort((a, b) => a.name.localeCompare(b.name));
   } else {
-    filtered.sort((a, b) => a.name.localeCompare(b.name));
+    filtered.sort((a, b) => b.stats.ppg - a.stats.ppg || a.name.localeCompare(b.name));
   }
 
   const countEl = document.getElementById('playersCount');
