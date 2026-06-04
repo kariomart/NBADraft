@@ -1032,11 +1032,40 @@ input, select { font-family: inherit; }
 
 /* ── Responsive ──────────────────────────────────────────────────────────── */
 @media (max-width: 768px) {
-  .draft-body { flex-direction: column; overflow-y: auto; }
-  .left-panel { width: 100%; border-right: none; border-bottom: 1px solid var(--border); max-height: 55vh; }
-  .right-panel { padding: 16px; }
+  /* ── Draft screen: left panel fills viewport, court scrolls below ── */
+  .draft-body {
+    flex-direction: column;
+    overflow-y: auto;   /* whole body scrolls so court is reachable below */
+  }
+
+  .left-panel {
+    width: 100%;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    /* Fill exactly the viewport minus the header — player list gets all remaining space */
+    height: calc(100vh - 60px);
+    max-height: none;   /* remove old 55vh cap */
+    flex-shrink: 0;
+    overflow: hidden;
+  }
+
+  /* Compact the wheel area so player list gets the most vertical room */
+  .wheel-area { padding: 8px 16px 8px; gap: 6px; }
+  .dials { gap: 8px; }
+  .dial-spinner { width: 60px; height: 60px; font-size: 12px; padding: 4px; }
+  .dial-spinner.era { font-size: 11px; }
+  .dial-x { font-size: 14px; margin-top: 18px; }
+  .dial-cap { font-size: 9px; letter-spacing: 0.08em; }
+  .reroll-btn { font-size: 10px; padding: 2px 8px; margin-top: 2px; }
+
+  /* Draft header slightly slimmer */
+  .draft-header { padding: 8px 14px; }
+
+  /* Court scrolls below the player list */
+  .right-panel { padding: 12px; flex-shrink: 0; }
   .court-container { max-width: 340px; }
 
+  /* ── Result screen ── */
   .result-hero { flex-direction: column; text-align: center; gap: 16px; }
   .hero-left { align-items: center; }
   .result-grid { grid-template-columns: 1fr; }
