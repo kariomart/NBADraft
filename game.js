@@ -744,8 +744,6 @@ function advanceAfterPick() {
   state.round++;
   state.posFilter = 'All';
   state.searchQuery = '';
-  state.rerollTeam = 1;
-  state.rerollEra = 1;
   renderDraftScreen();
   spinWheel();
 }
