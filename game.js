@@ -18,6 +18,7 @@ const state = {
   ballKnowledge: false,   // hide all stats during the draft, reveal at the end
   selectedEras: [],       // multi-select era tags driving yearFrom/yearTo
   challenge: null,        // an opponent team loaded from a challenge code
+  coach: null,            // selected after the roster is full
 };
 
 const FILL_ORDER = ['PG', 'SG', 'SF', 'PF', 'C'];
@@ -145,6 +146,7 @@ function startGame() {
   state.usedTeams = [];
   state.rerollTeam = 1;
   state.rerollEra = 1;
+  state.coach = null;
   renderDraftScreen();
   spinWheel();
 }
@@ -654,7 +656,7 @@ function advanceAfterPick() {
 
   const allFilled = FILL_ORDER.every(pos => state.roster[pos]);
   if (allFilled || state.round >= state.totalRounds) {
-    setTimeout(endGame, 500);
+    setTimeout(renderCoachPicker, 500);
     return;
   }
 
@@ -667,10 +669,79 @@ function advanceAfterPick() {
   spinWheel();
 }
 
+// ── Coach Picker ─────────────────────────────────────────────────────────────
+function renderCoachPicker() {
+  state.phase = 'coach';
+
+  // Compact locked roster bar
+  const rosterBar = FILL_ORDER.map(pos => {
+    const p = state.roster[pos];
+    return `<div class="coach-roster-slot">
+      <span class="coach-roster-pos">${pos}</span>
+      <span class="coach-roster-name">${p ? p.name.split(' ').pop() : '—'}</span>
+    </div>`;
+  }).join('');
+
+  // Build familiarity counts for each coach against the current roster
+  const coachCards = COACHES.map(c => {
+    const famPositions = FILL_ORDER.filter(pos => {
+      const p = state.roster[pos];
+      if (!p) return false;
+      return c.tenures.some(t =>
+        p.team === t.team &&
+        p.peak_years[0] <= t.to &&
+        p.peak_years[1] >= t.from
+      );
+    });
+    const famCount = famPositions.length;
+
+    const offSign  = c.ortgMod >= 0 ? '+' : '';
+    const defSign  = c.drtgMod <= 0 ? '' : '+';
+    const offColor = c.ortgMod >= 0 ? '#22c55e' : '#ef4444';
+    const defColor = c.drtgMod <= 0 ? '#22c55e' : '#ef4444';
+
+    const famBadge = famCount > 0
+      ? `<div class="coach-fam">★ ${famCount} player${famCount > 1 ? 's' : ''} familiar (+${(famCount * 0.4).toFixed(1)} OFF / ${(famCount * 0.3).toFixed(1)} DEF bonus)</div>`
+      : '';
+
+    return `
+      <div class="coach-card" onclick="selectCoach('${c.id}')">
+        <div class="coach-card-head">
+          <div>
+            <div class="coach-card-name">${c.name}</div>
+            <div class="coach-card-style">${c.style}</div>
+          </div>
+          <div class="coach-card-mods">
+            <span class="coach-mod" style="color:${offColor}">OFF ${offSign}${c.ortgMod}</span>
+            <span class="coach-mod" style="color:${defColor}">DEF ${defSign}${c.drtgMod}</span>
+          </div>
+        </div>
+        ${famBadge}
+        <div class="coach-card-note">${c.note}</div>
+      </div>`;
+  }).join('');
+
+  document.getElementById('app').innerHTML = `
+    <div class="coach-screen">
+      <div class="coach-header">
+        <h2>Pick Your Coach</h2>
+        <p class="coach-sub">Your roster is set. Choose the coach whose system fits it best.</p>
+        <div class="coach-roster-bar">${rosterBar}</div>
+      </div>
+      <div class="coach-grid">${coachCards}</div>
+    </div>
+  `;
+}
+
+function selectCoach(coachId) {
+  state.coach = COACHES.find(c => c.id === coachId) || null;
+  endGame();
+}
+
 // ── Result Screen (model-driven) ────────────────────────────────────────────
 function endGame() {
   state.phase = 'result';
-  const ev = MODEL.evaluateTeam(state.roster);
+  const ev = MODEL.evaluateTeam(state.roster, state.coach);
 
   // If an opponent code was loaded, show the head-to-head series instead.
   if (state.challenge) { renderHeadToHead(ev); return; }
@@ -728,6 +799,11 @@ function endGame() {
           <h1>Your Team</h1>
           <div class="result-archetype">${arch.label}</div>
           <div class="result-archetype-desc">${arch.desc}</div>
+          ${ev.coach ? `<div class="result-coach">
+            <span class="result-coach-name">${ev.coach.name}</span>
+            <span class="result-coach-style">${ev.coach.style}</span>
+            ${ev.familiarPositions.length > 0 ? `<span class="result-coach-fam">★ ${ev.familiarPositions.join(', ')} familiar</span>` : ''}
+          </div>` : ''}
           <div class="record-badge">
             <span class="record-wins">${ev.wins}</span>
             <span class="record-dash">-</span>
@@ -807,6 +883,7 @@ function encodeTeam(roster, name) {
     b: state.ballKnowledge ? 1 : 0,                      // ball-knowledge mode
     dv: PLAYERS.length,                                  // dataset size (soft check)
     p: FILL_ORDER.map(pos => (roster[pos] ? roster[pos].id : 0)),
+    c: state.coach ? state.coach.id : null,              // coach id
   };
   return b64urlEncode(JSON.stringify(payload));
 }
@@ -835,7 +912,8 @@ function decodeTeam(code) {
       if (!pl) missing++;
       roster[pos] = pl;
     });
-    return { payload, roster, missing };
+    const coach = payload.c ? (COACHES.find(c => c.id === payload.c) || null) : null;
+    return { payload, roster, missing, coach };
   } catch (e) {
     return null;
   }
@@ -863,7 +941,7 @@ function copyShare(kind) {
 
 // Apply a decoded challenge to state (era + mode are locked to the opponent's).
 function applyChallenge(dec) {
-  state.challenge = { name: dec.payload.n || 'Challenger', roster: dec.roster, payload: dec.payload };
+  state.challenge = { name: dec.payload.n || 'Challenger', roster: dec.roster, payload: dec.payload, coach: dec.coach };
   state.yearFrom = dec.payload.f;
   state.yearTo = dec.payload.t;
   state.selectedEras = Array.isArray(dec.payload.e) ? dec.payload.e : [];
@@ -946,7 +1024,7 @@ function teamArchetype(ev, roster) {
 
 // ── Head-to-head result ─────────────────────────────────────────────────────
 function renderHeadToHead(evMine) {
-  const evOpp = MODEL.evaluateTeam(state.challenge.roster);
+  const evOpp = MODEL.evaluateTeam(state.challenge.roster, state.challenge.coach || null);
   const series = MODEL.simulateSeries(evMine, evOpp);   // A = mine, B = opponent
 
   const myName = 'You';
@@ -988,6 +1066,7 @@ function renderHeadToHead(evMine) {
           <div class="h2h-grade" style="color:${gc}">${ev.grade}</div>
         </div>
         <div class="h2h-record">${ev.wins}–${ev.losses}</div>
+        ${ev.coach ? `<div class="h2h-coach">${ev.coach.name} · <em>${ev.coach.style}</em>${ev.familiarPositions.length > 0 ? ` · ★ ${ev.familiarPositions.join(', ')}` : ''}</div>` : ''}
         <div class="h2h-archetype">${arch.label}</div>
         <div class="h2h-archetype-desc">${arch.desc}</div>
         <div class="h2h-ratings">

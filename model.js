@@ -32,7 +32,7 @@ const MODEL = (() => {
   };
 
   // ── Main entry point ───────────────────────────────────────────────────────
-  function evaluateTeam(roster) {
+  function evaluateTeam(roster, coach = null) {
     const slots = ['PG', 'SG', 'SF', 'PF', 'C'];
     const lineup = slots.map(pos => ({ pos, player: roster[pos] || REPLACEMENT }));
     const players = lineup.map(l => l.player);
@@ -84,6 +84,26 @@ const MODEL = (() => {
     const smallBallPenalty =
       (centerP.stats.rpg < 7 && centerP.stats.bpg < 1.0) ? 1.5 : 0.0;
 
+    // ── Coach modifiers ─────────────────────────────────────────────────────────
+    // Familiar players: those who played for this coach's team during a tenure.
+    // Each familiar player adds a small bonus (knowledge of the system).
+    const familiarPositions = [];
+    if (coach) {
+      lineup.forEach(l => {
+        if (l.player === REPLACEMENT) return;
+        const p = l.player;
+        const familiar = coach.tenures.some(t =>
+          p.team === t.team &&
+          p.peak_years[0] <= t.to &&
+          p.peak_years[1] >= t.from
+        );
+        if (familiar) familiarPositions.push(l.pos);
+      });
+    }
+    const famCount   = Math.min(familiarPositions.length, 3);
+    const coachOrtg  = coach ? coach.ortgMod + famCount * 0.4 : 0;
+    const coachDrtg  = coach ? coach.drtgMod - famCount * 0.3 : 0;
+
     // ── Offensive Rating ────────────────────────────────────────────────────────
     const ortg = LEAGUE.ORTG
       + (wTS - LEAGUE.TS)        * 0.90   // shot efficiency / spacing
@@ -92,7 +112,8 @@ const MODEL = (() => {
       + (avgPER - LEAGUE.PER)    * 0.30   // overall offensive talent
       + spacingAdj
       + starOffBonus
-      - usageClash;
+      - usageClash
+      + coachOrtg;
 
     // ── Defensive Rating (lower = better) ───────────────────────────────────────
     const drtg = LEAGUE.DRTG
@@ -102,7 +123,8 @@ const MODEL = (() => {
       - (avgWS48 - LEAGUE.WS48)    * 14    // overall two-way impact
       - rimBonus
       - defStarBonus
-      + smallBallPenalty;
+      + smallBallPenalty
+      + coachDrtg;
 
     const netRtg = ortg - drtg;
 
@@ -165,6 +187,8 @@ const MODEL = (() => {
       pythagWins: Math.round(pythagPct * 82),
       grade, projection, sub, report, contributions,
       bestPlayer: contributions.slice().sort((a, b) => b.ws - a.ws)[0],
+      coach: coach || null,
+      familiarPositions,
     };
   }
 

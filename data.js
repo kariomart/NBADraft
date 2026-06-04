@@ -554,3 +554,106 @@ function getPlayersForTeam(teamId, yearFrom, yearTo) {
 function getRandomTeam() {
   return TEAMS[Math.floor(Math.random() * TEAMS.length)];
 }
+
+// ── Coaches ───────────────────────────────────────────────────────────────────
+// ortgMod: added directly to team ORTG (positive = more points per 100)
+// drtgMod: added directly to team DRTG (negative = fewer points allowed = better)
+// tenures: used to compute per-player familiarity bonus
+const COACHES = [
+  {
+    id: 'phil_jackson', name: 'Phil Jackson', style: 'Triangle Offense',
+    note: 'Zen Master. Off-ball movement, precision spacing, 11 rings.',
+    ortgMod: 2.5, drtgMod: -2.0,
+    tenures: [{ team: 'CHI', from: 1989, to: 1998 }, { team: 'LAL', from: 1999, to: 2011 }],
+  },
+  {
+    id: 'pat_riley', name: 'Pat Riley', style: 'Physical Showtime',
+    note: 'Relentless pressure. Championship DNA on both ends. No excuses.',
+    ortgMod: 1.0, drtgMod: -3.0,
+    tenures: [{ team: 'LAL', from: 1981, to: 1990 }, { team: 'NYK', from: 1991, to: 1995 }, { team: 'MIA', from: 1995, to: 2008 }],
+  },
+  {
+    id: 'gregg_popovich', name: 'Gregg Popovich', style: 'The System',
+    note: 'Ball movement, preparation, and discipline. Arguably the greatest coach in NBA history.',
+    ortgMod: 2.0, drtgMod: -2.5,
+    tenures: [{ team: 'SAS', from: 1996, to: 2024 }],
+  },
+  {
+    id: 'mike_dantoni', name: "Mike D'Antoni", style: 'Seven Seconds or Less',
+    note: 'Push pace, shoot early, space the floor. Defense is optional but offense is mandatory.',
+    ortgMod: 4.0, drtgMod: 2.0,
+    tenures: [{ team: 'PHX', from: 2003, to: 2008 }, { team: 'NYK', from: 2008, to: 2012 }, { team: 'LAL', from: 2012, to: 2014 }, { team: 'HOU', from: 2016, to: 2020 }],
+  },
+  {
+    id: 'chuck_daly', name: 'Chuck Daly', style: 'Bad Boys Defense',
+    note: 'No layups. No easy buckets. Physical, suffocating, and deeply unpleasant to play against.',
+    ortgMod: 0.5, drtgMod: -3.5,
+    tenures: [{ team: 'DET', from: 1983, to: 1992 }, { team: 'ORL', from: 1997, to: 1999 }],
+  },
+  {
+    id: 'red_auerbach', name: 'Red Auerbach', style: 'Celtic Pride',
+    note: 'The original dynasty builder. Team defense, unselfish offense, and a lit victory cigar.',
+    ortgMod: 1.5, drtgMod: -2.5,
+    tenures: [{ team: 'BOS', from: 1950, to: 1966 }],
+  },
+  {
+    id: 'larry_brown', name: 'Larry Brown', style: 'Play the Right Way',
+    note: 'Disciplined, defensively obsessed. Will run 15 plays just to get an open mid-range.',
+    ortgMod: 0.5, drtgMod: -2.5,
+    tenures: [{ team: 'PHI', from: 1997, to: 2003 }, { team: 'DET', from: 2003, to: 2005 }],
+  },
+  {
+    id: 'don_nelson', name: 'Don Nelson', style: 'Nellie Ball',
+    note: 'Small ball chaos. Everyone shoots threes. Defense is a suggestion. Opponents hate it.',
+    ortgMod: 3.5, drtgMod: 2.5,
+    tenures: [{ team: 'MIL', from: 1976, to: 1987 }, { team: 'GSW', from: 1988, to: 1995 }, { team: 'DAL', from: 1997, to: 2005 }, { team: 'GSW', from: 2006, to: 2010 }],
+  },
+  {
+    id: 'jerry_sloan', name: 'Jerry Sloan', style: 'Utah Pick & Roll',
+    note: 'Systematic. Physical. The pick-and-roll as a religion, perfected over 23 seasons.',
+    ortgMod: 2.0, drtgMod: -1.5,
+    tenures: [{ team: 'UTA', from: 1988, to: 2011 }],
+  },
+  {
+    id: 'rick_adelman', name: 'Rick Adelman', style: 'Princeton Offense',
+    note: 'Beautiful, fluid ball movement. Every player cuts. Every player passes.',
+    ortgMod: 2.5, drtgMod: 0.0,
+    tenures: [{ team: 'POR', from: 1988, to: 1994 }, { team: 'SAC', from: 1998, to: 2006 }, { team: 'HOU', from: 2007, to: 2011 }],
+  },
+  {
+    id: 'tom_thibodeau', name: 'Tom Thibodeau', style: 'Grind It Out',
+    note: 'Elite defensive schemes. Heavy minute loads. No days off, no shortcuts, no fun.',
+    ortgMod: -0.5, drtgMod: -3.5,
+    tenures: [{ team: 'CHI', from: 2010, to: 2015 }, { team: 'MIN', from: 2016, to: 2019 }, { team: 'NYK', from: 2020, to: 2024 }],
+  },
+  {
+    id: 'erik_spoelstra', name: 'Erik Spoelstra', style: 'Heat Culture',
+    note: 'Versatile, schematically brilliant. Teams always tougher than the sum of their parts.',
+    ortgMod: 1.5, drtgMod: -2.5,
+    tenures: [{ team: 'MIA', from: 2008, to: 2024 }],
+  },
+  {
+    id: 'billy_cunningham', name: 'Billy Cunningham', style: 'Sixers Run & Gun',
+    note: 'Up-tempo and aggressive. Get Dr. J the ball and let greatness happen.',
+    ortgMod: 3.0, drtgMod: 1.0,
+    tenures: [{ team: 'PHI', from: 1977, to: 1985 }],
+  },
+  {
+    id: 'lenny_wilkens', name: 'Lenny Wilkens', style: 'Fundamentals First',
+    note: 'Calm, methodical, player-friendly. Gets the most from what he has.',
+    ortgMod: 1.0, drtgMod: -1.0,
+    tenures: [{ team: 'OKC', from: 1969, to: 1985 }, { team: 'CLE', from: 1986, to: 1993 }, { team: 'ATL', from: 1993, to: 2000 }],
+  },
+  {
+    id: 'doc_rivers', name: 'Doc Rivers', style: 'Ubuntu',
+    note: '"I am because we are." Team-first, defensively sharp, clutch in big moments.',
+    ortgMod: 1.5, drtgMod: -2.0,
+    tenures: [{ team: 'BOS', from: 2004, to: 2013 }, { team: 'LAC', from: 2013, to: 2020 }],
+  },
+  {
+    id: 'stan_van_gundy', name: 'Stan Van Gundy', style: 'Defensive Scheme',
+    note: 'Elite rotations, physical defense, and a permanent look of existential concern.',
+    ortgMod: 0.0, drtgMod: -3.0,
+    tenures: [{ team: 'MIA', from: 2003, to: 2006 }, { team: 'ORL', from: 2007, to: 2012 }, { team: 'DET', from: 2014, to: 2018 }],
+  },
+];
