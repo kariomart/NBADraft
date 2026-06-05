@@ -367,7 +367,7 @@ function renderCourtSlots() {
       ? `draggable="true" ondragstart="onSlotDragStart(event,'${slot.id}')" ondragend="onDragEnd(event)"`
       : '';
     const inner = p
-      ? `<div class="slot-name">${p.name.split(' ').pop()}</div><div class="slot-pos-label">${slot.id}</div>`
+      ? `<div class="slot-name">${p.name.split(' ').pop()}</div><div class="slot-pos-label">${p.positions.join(' · ')}</div>`
       : `<div class="slot-pos-label">${slot.id}</div>`;
 
     return `
