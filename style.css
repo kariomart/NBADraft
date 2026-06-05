@@ -779,14 +779,6 @@ input, select { font-family: inherit; }
   cursor: grabbing;
 }
 
-/* Tap-selected slot (mobile swap) */
-.court-slot.slot-selected {
-  border-color: #fbbf24 !important;
-  border-style: solid !important;
-  background: rgba(251, 191, 36, 0.2) !important;
-  box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.25);
-}
-
 /* Position layout (% of court) */
 .slot-c  { top: 8%; left: calc(50% - 78px); }
 .slot-pf { top: 8%; left: calc(50% + 8px); }

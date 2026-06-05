@@ -24,7 +24,6 @@ const state = {
   challenge: null,        // an opponent team loaded from a challenge code
   coach: null,            // selected after the roster is full
   sharedResultName: '',   // name from a ?r= result link being viewed
-  selectedSlot: null,     // court slot selected via tap (mobile swap UX)
 };
 
 const FILL_ORDER = ['PG', 'SG', 'SF', 'PF', 'C'];
@@ -291,7 +290,6 @@ function startGame() {
   state.coachOptions = [];
   state.sameTeamsChallenge = false;
   state.sharedResultName = '';
-  state.selectedSlot = null;
   renderDraftScreen();
   spinWheel();
 }
@@ -365,7 +363,6 @@ function renderCourtSlots() {
 
   return slots.map(slot => {
     const p = state.roster[slot.id];
-    const isSelected = state.selectedSlot === slot.id;
     const dragAttrs = p
       ? `draggable="true" ondragstart="onSlotDragStart(event,'${slot.id}')" ondragend="onDragEnd(event)"`
       : '';
@@ -374,7 +371,7 @@ function renderCourtSlots() {
       : `<div class="slot-pos-label">${slot.id}</div>`;
 
     return `
-      <div class="court-slot ${slot.cls} ${p ? 'filled' : 'empty'} ${isSelected ? 'slot-selected' : ''}"
+      <div class="court-slot ${slot.cls} ${p ? 'filled' : 'empty'}"
            data-pos="${slot.id}"
            ${dragAttrs}
            onclick="onSlotClick('${slot.id}')"
@@ -392,42 +389,19 @@ function updateCourt() {
   if (court) court.innerHTML = renderCourtSlots();
 }
 
-// Tap-based slot interaction (mobile swap / move).
+// Tap a filled slot → if the player can play another position that's currently
+// empty, move them there. Handles the common mobile case of a multi-position
+// player auto-placed in the wrong slot.
 function onSlotClick(pos) {
-  // Ignore if a drag just ended — dragend fires before click on desktop.
   if (drag.type !== null) return;
-
   const player = state.roster[pos];
+  if (!player) return;
 
-  if (!state.selectedSlot) {
-    if (player) { state.selectedSlot = pos; updateCourt(); }
-    return;
-  }
+  const openElsewhere = player.positions.filter(p => p !== pos && !state.roster[p]);
+  if (!openElsewhere.length) return;
 
-  const fromPos    = state.selectedSlot;
-  const fromPlayer = state.roster[fromPos];
-
-  state.selectedSlot = null;
-
-  if (fromPos === pos) { updateCourt(); return; } // deselect
-
-  if (!player) {
-    // Move to empty slot if eligible.
-    if (fromPlayer.positions.includes(pos)) {
-      state.roster[fromPos] = null;
-      state.roster[pos] = fromPlayer;
-    } else {
-      flashInvalid(pos);
-    }
-  } else {
-    // Swap if both players are eligible for each other's slot.
-    if (player.positions.includes(fromPos) && fromPlayer.positions.includes(pos)) {
-      state.roster[fromPos] = player;
-      state.roster[pos] = fromPlayer;
-    } else {
-      flashInvalid(pos);
-    }
-  }
+  state.roster[pos] = null;
+  state.roster[openElsewhere[0]] = player;
   updateCourt();
 }
 
