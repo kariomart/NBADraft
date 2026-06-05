@@ -1079,22 +1079,18 @@ function endGame() {
             <span class="mode-toggle-sub">Opponent gets the exact same teams & eras you drafted from</span>
           </span>
         </button>
-        <input id="challengerName" class="share-name" placeholder="Your name (optional)" maxlength="24" oninput="refreshShareCode();refreshResultCode()">
+        <input id="challengerName" class="share-name" placeholder="Your name (optional)" maxlength="24" oninput="refreshShareCode()">
         <div class="share-code-row">
           <input id="shareLink" class="share-code" readonly value="${buildShareURL(shareCode)}">
           <button class="btn-ghost" id="copyLinkBtn" onclick="copyShare('link')">Copy Link</button>
         </div>
         <button class="share-altcopy" id="copyCodeBtn" onclick="copyShare('code')">Copy raw code instead</button>
-        <div class="share-result-row">
-          <span class="share-result-label">🔗 Share your result</span>
-          <input id="shareResultLink" class="share-code" readonly value="${buildResultURL(shareCode)}">
-          <button class="btn-ghost" id="shareResultBtn" onclick="shareResult()">Copy</button>
-        </div>
       </div>
 
       <div class="result-actions">
         <button class="btn-primary" onclick="startGame()">Draft Again</button>
         <button class="btn-ghost" onclick="renderSetup()">Change Era</button>
+        <button class="btn-ghost" id="shareResultBtn" onclick="shareResult()">🔗 Share Result</button>
         <button class="btn-ghost" id="copyImgBtn" onclick="copyResultImage()">📸 Share</button>
       </div>
     </div>
@@ -1122,20 +1118,20 @@ async function copyResultImage() {
 
     canvas.toBlob(async blob => {
       const file = new File([blob], 'nba-draft-result.png', { type: 'image/png' });
+      const isMobile = navigator.maxTouchPoints > 1 || 'ontouchstart' in window;
 
-      // Web Share API — works natively on iOS/Android (share sheet).
-      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      // Web Share API — only on touch/mobile where the share sheet is natural.
+      if (isMobile && navigator.canShare && navigator.canShare({ files: [file] })) {
         try {
           await navigator.share({ files: [file], title: 'NBA Draft Sim' });
           btn.textContent = 'Shared!';
         } catch {
-          // User cancelled share sheet — just reset quietly.
           btn.textContent = orig;
           btn.disabled = false;
           return;
         }
       } else {
-        // Desktop: try clipboard, fall back to download.
+        // Desktop: clipboard, fall back to download.
         try {
           await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
           btn.textContent = 'Copied!';
