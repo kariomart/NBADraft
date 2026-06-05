@@ -1222,6 +1222,95 @@ input, select { font-family: inherit; }
 }
 .series-narrative-p strong { color: var(--text); }
 
+/* ── Model explanation ──────────────────────────────────────────────────────── */
+.model-explainer {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 10px;
+  padding: 12px 16px;
+  margin-bottom: 14px;
+}
+.explainer-head {
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--accent);
+  margin-bottom: 6px;
+}
+.explainer-body {
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text-muted);
+  margin: 0;
+}
+.explainer-body strong { color: var(--text); }
+
+/* ── Game-by-game recap ─────────────────────────────────────────────────────── */
+.series-recap { display: flex; flex-direction: column; gap: 10px; }
+.recap-intro {
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+.recap-intro strong { color: var(--text); }
+
+.recap-game {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+.recap-game.win  { border-left-color: var(--green); }
+.recap-game.lose { border-left-color: #ef4444; }
+
+.recap-game-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+.recap-game-head::-webkit-details-marker { display: none; }
+.recap-game[open] .recap-game-head { margin-bottom: 8px; }
+
+.recap-game-toggle {
+  color: var(--text-muted);
+  font-size: 12px;
+  transition: transform 0.2s ease;
+}
+.recap-game[open] .recap-game-toggle { transform: rotate(180deg); }
+.recap-game-no {
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+}
+.recap-game-score { font-size: 15px; font-weight: 700; color: var(--text); }
+.recap-game-score strong { color: var(--accent); }
+.recap-game-loc {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.recap-game-body {
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--text-muted);
+}
+.recap-game-tally {
+  margin-top: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+  opacity: 0.8;
+}
+
 .h2h-banner {
   width: 100%;
   background: var(--surface);

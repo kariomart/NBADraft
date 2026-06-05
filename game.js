@@ -1478,6 +1478,314 @@ function buildSeriesNarrative(evMine, evOpp, series, myName, oppName) {
   return `<p class="series-narrative-p">${lines.join(' ')}</p>`;
 }
 
+// ── Game-by-game playoff recap ──────────────────────────────────────────────
+// Dramatizes the projected (most-likely) series result one game at a time:
+// simulated box-score moments, matchup-aware commentary, and coaching beats.
+// Seeded off the rosters so the recap is stable across re-renders.
+
+const RECAP_HCA = 2.7;   // mirrors MODEL's home-court edge (pts/game)
+
+// mulberry32 — small deterministic PRNG so "random variance" stays stable.
+function makeRng(seedStr) {
+  let h = 1779033703 ^ seedStr.length;
+  for (let i = 0; i < seedStr.length; i++) {
+    h = Math.imul(h ^ seedStr.charCodeAt(i), 3432918353);
+    h = (h << 13) | (h >>> 19);
+  }
+  let a = h >>> 0;
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function rosterArr(roster) {
+  return ['PG', 'SG', 'SF', 'PF', 'C']
+    .map(pos => roster[pos]).filter(Boolean);
+}
+
+function pick(rng, arr) { return arr[Math.floor(rng() * arr.length)]; }
+function lastName(n) { return n.split(' ').slice(-1)[0]; }
+function decadeOf(p) { return p.from ? `${Math.floor(p.from / 10) * 10}s` : ''; }
+function poss(name) {
+  if (name === 'You') return 'Your';
+  return name.endsWith('s') ? `${name}'` : `${name}'s`;
+}
+
+// Simulate one player's night. mode tilts the variance: hero = explosion,
+// quiet = off-night, solid = ordinary game around his averages.
+function simStatLine(p, rng, mode) {
+  const s = p.stats;
+  const mult = mode === 'hero'  ? 1.18 + rng() * 0.42
+             : mode === 'quiet' ? 0.40 + rng() * 0.35
+             :                    0.78 + rng() * 0.48;
+  return {
+    pts: Math.max(2, Math.round(s.ppg * mult)),
+    reb: Math.max(0, Math.round(s.rpg * (0.7 + rng() * 0.6))),
+    ast: Math.max(0, Math.round(s.apg * (0.7 + rng() * 0.6))),
+    blk: Math.round(s.bpg * (0.5 + rng() * 1.1)),
+    stl: Math.round(s.spg * (0.5 + rng() * 1.1)),
+  };
+}
+
+function fmtLine(p, l) {
+  const parts = [`${l.pts} pts`];
+  if (l.reb >= 8) parts.push(`${l.reb} reb`);
+  if (l.ast >= 6) parts.push(`${l.ast} ast`);
+  if (l.blk >= 3) parts.push(`${l.blk} blk`);
+  else if (l.stl >= 3) parts.push(`${l.stl} stl`);
+  return `${p.name} (${parts.join(', ')})`;
+}
+
+function fmtNet(n) { const v = Math.round(n * 10) / 10; return (v >= 0 ? '+' : '') + v; }
+
+// The single most salient stylistic reason the matchup tilts toward `winEv`.
+function styleReason(winEv, losEv, winName, losName) {
+  if (winEv.profile.def.rim > 0.8 && losEv.profile.paintShare > 0.40)
+    return `${poss(winName)} rim protection blunts ${poss(losName)} interior-heavy scoring`;
+  if (winEv.profile.def.perim > 0.7 && losEv.profile.shootDep > 0.5)
+    return `${poss(winName)} perimeter defense smothers ${poss(losName)} jump-shooting`;
+  if (winEv.profile.shootDep > 0.55 && losEv.profile.def.perim < 0.4)
+    return `${poss(winName)} shooting exploits ${poss(losName)} soft perimeter defense`;
+  if (winEv.profile.paintShare > 0.40 && losEv.profile.def.rim < 0.3)
+    return `${poss(winName)} interior game overwhelms ${poss(losName)} thin rim protection`;
+  return null;
+}
+
+// Short, plain-English rationale for the model's pick. Cites the real margin
+// decomposition (net-rating gap, style swing, pace, home court) so it always
+// agrees with the numbers driving the projection.
+function buildModelExplanation(evMine, evOpp, series, myName, oppName) {
+  const iWin = series.winner === 'A';
+  const winName = iWin ? myName : oppName;
+  const losName = iWin ? oppName : myName;
+  const evW = iWin ? evMine : evOpp;
+  const evL = iWin ? evOpp : evMine;
+  const b = series.breakdown;
+
+  const netW = iWin ? b.netA : b.netB;
+  const netL = iWin ? b.netB : b.netA;
+  const gap  = Math.round(Math.abs(b.netA - b.netB) * 10) / 10;
+  const netLeaderIsWinner = (b.netA >= b.netB) === iWin;
+
+  // Decisive sub-area: where the winner's edge over the loser is largest.
+  const areas = [
+    ['offense', 'scoring efficiency'],
+    ['defense', 'team defense'],
+    ['playmaking', 'playmaking and ball movement'],
+    ['rebounding', 'rebounding'],
+    ['starPower', 'top-end star power'],
+  ];
+  let area = 'overall balance', diff = -Infinity;
+  areas.forEach(([k, label]) => {
+    const d = evW.sub[k].score - evL.sub[k].score;
+    if (d > diff) { diff = d; area = label; }
+  });
+
+  const parts = [];
+
+  // 1) Overall talent picture.
+  if (!netLeaderIsWinner) {
+    parts.push(`On paper it's nearly a wash — ${losName} grade a touch higher in raw net rating — but the model still leans <strong>${winName}</strong> once the matchup and home court are folded in.`);
+  } else if (gap < 1.5) {
+    parts.push(`These two grade out almost dead even (net rating ${fmtNet(netW)} vs ${fmtNet(netL)}), so the model is splitting hairs.`);
+  } else {
+    parts.push(`The model rates <strong>${winName}</strong> the stronger team — a ${gap}-point net-rating edge per 100 possessions, led by their advantage in ${area}.`);
+  }
+
+  // 2) The most salient secondary factor (style > home court > pace).
+  const winSwing = iWin ? b.styleSwing : -b.styleSwing;   // >0 helps the winner
+  const iAmHigher = series.marginA >= 0;
+  const higherName = iAmHigher ? myName : oppName;
+  const reason = styleReason(evW, evL, winName, losName);
+  const counter = styleReason(evL, evW, losName, winName);
+
+  if (Math.abs(winSwing) >= 0.8 && (winSwing > 0 ? reason : counter)) {
+    parts.push(winSwing > 0
+      ? `The styles reinforce it: ${reason}.`
+      : `Stylistically it's awkward — ${counter} — but not enough to flip the result.`);
+  } else if (higherName === winName && gap < 4) {
+    parts.push(`Home court is the tiebreaker: ${winName === 'You' ? 'you host' : winName + ' host'} Games 1, 2, 5 and a possible 7.`);
+  } else if (b.paceScale < 0.97) {
+    parts.push(`Both play at a deliberate tempo, which compresses margins and keeps it closer than the gap suggests.`);
+  }
+
+  // 3) Bottom line — the probabilities themselves.
+  const pGameWin = iWin ? series.pGameA : 1 - series.pGameA;
+  parts.push(`Bottom line: ${winName} win a single game <strong>${Math.round(pGameWin * 100)}%</strong> of the time and the series <strong>${Math.round(series.pSeriesWinner * 100)}%</strong> of the time.`);
+
+  return `<div class="explainer-head">🧠 Why the model favors ${winName}</div><p class="explainer-body">${parts.join(' ')}</p>`;
+}
+
+function buildGameByGame(evMine, evOpp, series, myName, oppName) {
+  const iWin       = series.winner === 'A';
+  const winnerName = iWin ? myName : oppName;
+  const loserName  = iWin ? oppName : myName;
+  const evW = iWin ? evMine : evOpp;
+  const evL = iWin ? evOpp : evMine;
+  const rosW = rosterArr(iWin ? state.roster : state.challenge.roster);
+  const rosL = rosterArr(iWin ? state.challenge.roster : state.roster);
+  if (!rosW.length || !rosL.length) return '';
+
+  const [, lg] = series.likelyScore.split('-').map(Number);  // winner always 4
+  const total  = 4 + lg;
+
+  // Higher seed (home court) = the team with the better resolved margin.
+  // series.marginA is mine; >= 0 means I'm the higher seed.
+  const iAmHigher  = series.marginA >= 0;
+  const higherName = iAmHigher ? myName : oppName;
+  const lowerName  = iAmHigher ? oppName : myName;
+  const HOME = [true, true, false, false, true, false, true]; // higher seed home?
+  const m = Math.abs(series.marginA);                         // higher seed's edge
+  const paceAvg = (evW.profile.pace + evL.profile.pace) / 2;
+
+  // Stable seed from the two rosters + projected score.
+  const rng = makeRng(
+    myName + '|' + oppName + '|' +
+    rosW.map(p => p.name).join() + '|' + series.likelyScore);
+
+  // Order the games: winner takes 3 of the first (total-1) plus the clincher;
+  // loser's wins all land before the close-out. Game `total` is the winner's.
+  const order = [];
+  for (let i = 0; i < 3; i++) order.push('W');
+  for (let i = 0; i < lg; i++) order.push('L');
+  for (let i = order.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [order[i], order[j]] = [order[j], order[i]];
+  }
+  order.push('W');
+
+  // Standout pools.
+  const byScore = a => a.slice().sort((x, y) => y.stats.ppg - x.stats.ppg);
+  const topBlkP = a => a.slice().sort((x, y) => y.stats.bpg - x.stats.bpg)[0];
+  const topAstP = a => a.slice().sort((x, y) => y.stats.apg - x.stats.apg)[0];
+  const coachOf = name => (name === myName ? evMine.coach : evOpp.coach);
+
+  let myWins = 0, oppWins = 0;
+  const cards = [];
+  const usedStyle = new Set();   // avoid repeating the same style note
+
+  for (let gi = 0; gi < total; gi++) {
+    const n = gi + 1;
+    const homeIsHigher = HOME[gi];
+    const homeName = homeIsHigher ? higherName : lowerName;
+
+    const gWinnerName = order[gi] === 'W' ? winnerName : loserName;
+    const gLoserName  = gWinnerName === myName ? oppName : myName;
+    const gWinIsMine  = gWinnerName === myName;
+    const winRos = gWinnerName === winnerName ? rosW : rosL;
+    const losRos = gWinnerName === winnerName ? rosL : rosW;
+    const winEv  = gWinnerName === winnerName ? evW : evL;
+    const losEv  = gWinnerName === winnerName ? evL : evW;
+
+    // Per-game margin: favorites (esp. at home) win by more; road steals are
+    // tight. higherEdge = higher seed's expected margin in THIS venue.
+    const higherEdge   = homeIsHigher ? m + RECAP_HCA : m - RECAP_HCA;
+    const favoredHigher = higherEdge >= 0;
+    const winnerIsHigher = gWinnerName === higherName;
+    const winnerFavored = winnerIsHigher === favoredHigher;
+    let base = winnerFavored ? 8 : 4;
+    if (gWinnerName === homeName) base += 2;
+    const margin = Math.max(1, Math.min(28, Math.round(base + (rng() * 2 - 1) * 8)));
+
+    const losPts = Math.round((paceAvg / 112.4) * (99 + rng() * 14));
+    const winPts = losPts + margin;
+
+    if (gWinIsMine) myWins++; else oppWins++;
+
+    // ── Box-score moments ────────────────────────────────────────────────────
+    // Rotate the hero across games so different stars headline different nights.
+    const heroPool = byScore(winRos).slice(0, 3);
+    const hero = heroPool[gi % heroPool.length] || winRos[0];
+    const heroLine = simStatLine(hero, rng, 'hero');
+    const losLeader = byScore(losRos)[0];
+    const losLine = simStatLine(losLeader, rng, margin <= 7 ? 'hero' : 'solid');
+
+    const lines = [];
+
+    // 1. Result + hero.
+    const venue = gWinnerName === homeName
+      ? 'at home'
+      : `on the road in ${homeName === myName ? 'your building' : poss(homeName) + ' building'}`;
+    lines.push(`${gWinnerName} took Game ${n} ${winPts}–${losPts} ${venue}, behind ${fmtLine(hero, heroLine)}.`);
+
+    // 2. Random-variance flourish — occasionally an unexpected source erupts.
+    const bench = byScore(winRos).slice(2);
+    if (bench.length && rng() < 0.28) {
+      const role = pick(rng, bench);
+      const roleLine = simStatLine(role, rng, 'hero');
+      if (role !== hero && roleLine.pts >= role.stats.ppg + 4) {
+        lines.push(role.stats.ppg < 16
+          ? `The swing was unlikely: ${role.name}, a ${role.stats.ppg}-a-night role player, caught fire for ${roleLine.pts}.`
+          : `An unexpected source carried it: ${role.name} poured in ${roleLine.pts}.`);
+      }
+    }
+
+    // 3. How the loser fared.
+    if (margin <= 7) {
+      lines.push(`${gLoserName} had it to the wire — ${fmtLine(losLeader, losLine)} nearly stole it.`);
+    } else if (margin >= 17) {
+      lines.push(`It was a statement: ${gLoserName} never threatened, and ${lastName(losLeader.name)}'s ${losLine.pts} came without support.`);
+    } else {
+      lines.push(`${lastName(losLeader.name)} answered with ${losLine.pts} for ${gLoserName}, but the margin never tilted back.`);
+    }
+
+    // 4. Matchup / style note from the team profiles. Prefer notes we haven't
+    //    used yet so the recap doesn't repeat the same beat every game.
+    const styleBits = [];
+    if (winEv.profile.def.rim > 0.8 && losEv.profile.paintShare > 0.40) {
+      styleBits.push(`${topBlkP(winRos).name} owned the paint, turning ${poss(gLoserName)} interior looks into bricks.`);
+    }
+    if (winEv.profile.shootDep > 0.55 && margin >= 8) {
+      styleBits.push(`${gWinnerName} spaced the floor and buried it from deep — when those shooters connect there's no answer.`);
+    }
+    if (losEv.profile.shootDep > 0.55 && margin >= 8) {
+      styleBits.push(`${gLoserName} lived by the jumper and died by it; the threes simply stopped falling.`);
+    }
+    if (winEv.profile.def.perim > 0.7) {
+      styleBits.push(`${poss(gWinnerName)} ball pressure forced ${gLoserName} into the shot clock all night.`);
+    }
+    if (topAstP(winRos).stats.apg >= 7) {
+      styleBits.push(`${topAstP(winRos).name} orchestrated everything, picking ${gLoserName} apart with the pass.`);
+    }
+    if (styleBits.length) {
+      const fresh = styleBits.filter(b => !usedStyle.has(b));
+      const choice = pick(rng, fresh.length ? fresh : styleBits);
+      usedStyle.add(choice);
+      lines.push(choice);
+    }
+
+    // 5. Coaching beat on the pivotal games (3/4 road swing, and a Game 7).
+    const hCoach = coachOf(homeName), wCoach = coachOf(gWinnerName);
+    if (n === total && total === 7 && wCoach) {
+      lines.push(`Game 7. ${wCoach.name} drew it up out of the timeout — ${wCoach.style.toLowerCase()} to the end — and ${gWinnerName} executed when it counted.`);
+    } else if ((n === 3 || n === 4) && hCoach && rng() < 0.6) {
+      lines.push(`${hCoach.name} used the home floor to impose ${hCoach.style.toLowerCase()}, and the adjustments stuck.`);
+    } else if (rng() < 0.18) {
+      lines.push(`Vintage ${lastName(hero.name)} — the kind of night that defined his ${decadeOf(hero)} peak.`);
+    }
+
+    const tally = `${myName} ${myWins}, ${oppName} ${oppWins}`;
+    cards.push(`
+      <details class="recap-game ${gWinIsMine ? 'win' : 'lose'}">
+        <summary class="recap-game-head">
+          <span class="recap-game-no">Game ${n}</span>
+          <span class="recap-game-score">${gWinnerName} <strong>${winPts}–${losPts}</strong></span>
+          <span class="recap-game-loc">@ ${homeName === myName ? 'You' : homeName}</span>
+          <span class="recap-game-toggle">▾</span>
+        </summary>
+        <div class="recap-game-body">${lines.join(' ')}</div>
+        <div class="recap-game-tally">Series: ${tally}</div>
+      </details>`);
+  }
+
+  const verb = winnerName === myName ? 'win' : 'wins';
+  const intro = `<div class="recap-intro"><strong>${winnerName} ${verb} the series ${series.likelyScore}.</strong> Here's how it could play out, game by game:</div>`;
+  return `<div class="series-recap">${intro}${cards.join('')}</div>`;
+}
+
 // ── Head-to-head result ─────────────────────────────────────────────────────
 function renderHeadToHead(evMine) {
   const evOpp = MODEL.evaluateTeam(state.challenge.roster, state.challenge.coach || null);
@@ -1546,16 +1854,21 @@ function renderHeadToHead(evMine) {
           <span class="h2h-bar-label right">${oppName} ${100 - myBarPct}%</span>
         </div>
         <div class="h2h-detail">Single game: you win ${myGamePct}% · expected margin ${series.marginA >= 0 ? '+' : ''}${series.marginA} per game</div>
-      </div>
-
-      <div class="series-narrative">
-        ${buildSeriesNarrative(evMine, evOpp, series, myName, oppName)}
+        <div class="h2h-detail">Projected length: ${series.expectedGames} games · ${Math.round(series.pGoes7 * 100)}% chance it reaches a Game 7</div>
       </div>
 
       <div class="h2h-grid">
         ${teamColumn(evMine, myName, true, state.roster)}
         <div class="h2h-vs">VS</div>
         ${teamColumn(evOpp, oppName, false, state.challenge.roster)}
+      </div>
+
+      <div class="model-explainer">
+        ${buildModelExplanation(evMine, evOpp, series, myName, oppName)}
+      </div>
+
+      <div class="series-narrative">
+        ${buildGameByGame(evMine, evOpp, series, myName, oppName)}
       </div>
 
       <div class="result-actions">

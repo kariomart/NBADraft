@@ -231,6 +231,41 @@ const MODEL = (() => {
       maxPER, twoWay, smallBallPenalty,
     });
 
+    // ── Head-to-head matchup fingerprint ─────────────────────────────────────────
+    // The series sim needs more than a single net-rating scalar: WHERE a team
+    // scores (rim vs perimeter), how jump-shot-dependent it is (variance), how
+    // its defense is built (rim vs perimeter), and the tempo of its era (pace).
+    const bigsPPG = elineup
+      .filter(l => ['PF', 'C'].includes(l.pos))
+      .reduce((t, p) => t + p.stats.ppg, 0);
+    const paintShare = sumPPG > 0 ? bigsPPG / sumPPG : 0.37;
+
+    // 0 (pure grind / interior identity) → 1 (lives on jumpers).
+    const shootDep = clamp(
+      0.35 + (spacers - 3) * 0.10 + (wTS - LEAGUE.TS) * 0.015, 0, 1);
+
+    // Average scoring environment of the real starters' eras → tempo proxy.
+    const realStarters = lineup.filter(
+      l => l.player !== REPLACEMENT && l.player.from != null);
+    const avgEnv = realStarters.length
+      ? realStarters.reduce((t, l) => {
+          const mid = clamp(
+            Math.round((l.player.from + l.player.to) / 2), ERA_MIN, ERA_MAX);
+          return t + (LEAGUE_ENV[mid] || REFERENCE_ENV);
+        }, 0) / realStarters.length
+      : REFERENCE_ENV;
+
+    const profile = {
+      off: { paintShare, shootDep },
+      def: {
+        // Centered ~0 for a league-average defense; >0 = a strength.
+        rim:   rimBonus + (sumBPG - LEAGUE.sumBPG) * 0.30 - smallBallPenalty,
+        perim: defStarBonus + (sumSPG - LEAGUE.sumSPG) * 0.30,
+      },
+      shootDep,
+      pace: avgEnv,
+    };
+
     return {
       wins, losses,
       ortg: round1(ortg), drtg: round1(drtg), netRtg: round1(netRtg),
@@ -239,6 +274,7 @@ const MODEL = (() => {
       bestPlayer: contributions.slice().sort((a, b) => b.ws - a.ws)[0],
       coach: coach || null,
       familiarPositions,
+      profile,
     };
   }
 
@@ -308,29 +344,80 @@ const MODEL = (() => {
   }
 
   // ── Head-to-head: 7-game series ──────────────────────────────────────────────
-  // Given two evaluated teams, derive a single-game win probability from the
-  // difference in net rating, then compute best-of-7 series odds analytically.
+  const BASE_SD = 12;     // NBA single-game point-margin standard deviation
+  const HCA     = 2.7;    // home-court advantage, points per game
+  const K_RIM   = 3.0;    // weight: rim defense vs interior-reliant offense
+  const K_PERIM = 3.0;    // weight: perimeter defense vs jump-shooting offense
+
+  // Style interaction: a defense's strengths bite harder against an offense
+  // that leans the matching way, and are partly wasted against one that doesn't.
+  // Centered on a league-average matchup (→ ~0), so this redistributes rather
+  // than double-counts effects already baked into each team's net rating.
+  function styleMatch(off, def) {
+    const rimReliance   = off.paintShare - 0.37;   // >0 = paint-heavy offense
+    const shootReliance = off.shootDep   - 0.45;   // >0 = jump-shot-heavy offense
+    return clamp(
+      -(def.rim   || 0) * rimReliance   * K_RIM
+      - (def.perim || 0) * shootReliance * K_PERIM,
+      -3.0, 3.0);
+  }
+
+  // Exact best-of-7 distribution given the higher seed's per-game win prob for
+  // each game in schedule order (probabilities vary by venue, so we enumerate
+  // rather than use the i.i.d. closed form). Series ends at four wins.
+  function seriesDist(pHighByGame) {
+    const res = { high: { 4: 0, 5: 0, 6: 0, 7: 0 }, low: { 4: 0, 5: 0, 6: 0, 7: 0 } };
+    (function rec(g, hw, lw, prob) {
+      if (hw === 4) { res.high[g] += prob; return; }   // g = games played
+      if (lw === 4) { res.low[g]  += prob; return; }
+      const ph = pHighByGame[g];
+      rec(g + 1, hw + 1, lw, prob * ph);
+      rec(g + 1, hw, lw + 1, prob * (1 - ph));
+    })(0, 0, 0, 1);
+    return res;
+  }
+
+  // Given two evaluated teams, resolve each offense against the OTHER team's
+  // actual defense (not a league-average opponent), fold in pace and shooting
+  // variance, then compute best-of-7 odds over a 2-2-1-1-1 home schedule.
   function simulateSeries(evA, evB) {
-    // When A and B play each other, A's expected per-game margin (per 100 poss,
-    // ≈ per game in the modern NBA) is half the gap in their net ratings.
-    const margin = (evA.netRtg - evB.netRtg) / 2;
+    const A = evA.profile, B = evB.profile;
 
-    // NBA single-game point margins have a standard deviation of ≈ 12.
-    const SD = 12;
-    let p = clamp(normCdf(margin / SD), 0.02, 0.98);  // A's single-game win prob
-    const q = 1 - p;
+    // ── #1/#2: matchup-resolved expected margin (neutral site) ──────────────
+    // The base margin is the FULL net-rating gap (not halved): resolving each
+    // offense against the other's actual defense reduces algebraically to
+    // netA − netB. Style interactions then break transitivity (A>B, B>C, C>A).
+    const baseMargin = evA.netRtg - evB.netRtg;
+    const styleA = styleMatch(A.off, B.def);   // A's offense vs B's defense
+    const styleB = styleMatch(B.off, A.def);   // B's offense vs A's defense
+    let margin = baseMargin + (styleA - styleB);
 
-    // P(win the series in exactly n games) = C(n-1, 3) · pw^4 · pl^(n-4)
-    const dist = pw => {
-      const pl = 1 - pw;
-      return {
-        4: Math.pow(pw, 4),
-        5: 4  * Math.pow(pw, 4) * pl,
-        6: 10 * Math.pow(pw, 4) * pl * pl,
-        7: 20 * Math.pow(pw, 4) * pl * pl * pl,
-      };
-    };
-    const dA = dist(p), dB = dist(q);
+    // ── #5: pace / possession compression ───────────────────────────────────
+    // Fewer combined possessions shrink margins (and widen upset odds). A
+    // grind-it-out, low-tempo pairing drags favorites toward a coin flip.
+    const paceScale = clamp(((A.pace + B.pace) / 2) / REFERENCE_ENV, 0.85, 1.06);
+    margin *= paceScale;
+
+    // ── #4: per-team variance from shooting dependence ──────────────────────
+    // A jump-shooting team is higher variance game-to-game, helping the dog.
+    const shootDepAvg = (A.shootDep + B.shootDep) / 2;
+    const SD = BASE_SD * (1 + 0.18 * (shootDepAvg - 0.45));
+
+    // A's neutral-site single-game win probability.
+    const pGameA = clamp(normCdf(margin / SD), 0.02, 0.98);
+
+    // ── #3: home-court advantage over a 2-2-1-1-1 schedule ──────────────────
+    // Higher seed = the team with the better resolved margin; it hosts games
+    // 1, 2, 5 and 7. Each home game shifts that team's margin by +HCA.
+    const aIsHigh = margin >= 0;
+    const m = Math.abs(margin);                                  // higher seed margin
+    const HOME = [true, true, false, false, true, false, true];  // higher seed home?
+    const pHighByGame = HOME.map(home =>
+      clamp(normCdf((m + (home ? HCA : -HCA)) / SD), 0.02, 0.98));
+
+    const d  = seriesDist(pHighByGame);
+    const dA = aIsHigh ? d.high : d.low;     // A's win-in-N distribution
+    const dB = aIsHigh ? d.low  : d.high;
     const pSeriesA = dA[4] + dA[5] + dA[6] + dA[7];
     const pSeriesB = 1 - pSeriesA;
 
@@ -340,15 +427,32 @@ const MODEL = (() => {
       ['B', '4-0', dB[4]], ['B', '4-1', dB[5]], ['B', '4-2', dB[6]], ['B', '4-3', dB[7]],
     ].sort((x, y) => y[2] - x[2]);
 
+    // ── #6: richer output — series-length spread ────────────────────────────
+    const pGoes7 = dA[7] + dB[7];
+    const expectedGames =
+      4 * (dA[4] + dB[4]) + 5 * (dA[5] + dB[5]) +
+      6 * (dA[6] + dB[6]) + 7 * (dA[7] + dB[7]);
+
     const winner = pSeriesA >= pSeriesB ? 'A' : 'B';
     return {
       winner,
-      pGameA: p,
+      pGameA,
       marginA: round1(margin),
       pSeriesA, pSeriesB,
       pSeriesWinner: Math.max(pSeriesA, pSeriesB),
       likelyWinner: outcomes[0][0],
       likelyScore: outcomes[0][1],
+      pGoes7,
+      expectedGames: round1(expectedGames),
+      dist: { a: dA, b: dB },
+      // Decomposition of A's neutral-site margin, for the explanation generator.
+      breakdown: {
+        netA: evA.netRtg, netB: evB.netRtg,
+        baseMargin: round1(baseMargin),   // raw net-rating gap (A − B)
+        styleSwing: round1(styleA - styleB), // +favors A from the matchup
+        paceScale:  round1(paceScale),    // <1 compresses, >1 widens
+        margin:     round1(margin),       // final neutral-site margin (A)
+      },
     };
   }
 
