@@ -1520,6 +1520,7 @@ function renderHeadToHead(evMine) {
       <div class="result-actions">
         <button class="btn-primary" onclick="startGame()">Rematch (same era)</button>
         <button class="btn-ghost" onclick="clearChallenge()">New Game</button>
+        <button class="btn-ghost" id="shareResultBtn" onclick="shareResult()">🔗 Share Result</button>
         <button class="btn-ghost" id="copyImgBtn" onclick="copyResultImage()">📸 Share</button>
       </div>
     </div>
