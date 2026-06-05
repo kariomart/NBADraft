@@ -905,6 +905,28 @@ function spinCoachRound() {
   showCoachList();
 }
 
+// Fallback flavor for the legacy 'TODO' coaches, keyed off their derived tag.
+const TAG_NOTE = {
+  defense: 'Defense-first system — grit, physicality, and stops.',
+  pace: 'Pushes tempo and attacks early in the clock.',
+  movement: 'Ball movement and unselfish, read-and-react offense.',
+  empower: 'Hands the keys to the stars and lets them cook.',
+  develop: 'Player development — raises the floor of a raw roster.',
+  grit: 'Old-school, half-court, fundamentally sound.',
+  balanced: 'A balanced, adaptable system.',
+};
+function coachNote(c) {
+  return (c.note && c.note !== 'TODO')
+    ? c.note
+    : (TAG_NOTE[MODEL.coachTags(c)[0]] || TAG_NOTE.balanced);
+}
+function coachFitVerdict(fit) {
+  if (fit >= 1.6) return { label: 'Perfect fit', cls: 'fit-great' };
+  if (fit >= 0.7) return { label: 'Good fit',    cls: 'fit-good' };
+  if (fit > -0.8) return { label: 'Neutral fit', cls: 'fit-mid' };
+  return { label: 'Style clash', cls: 'fit-bad' };
+}
+
 function showCoachList() {
   state.phase = 'pick';
 
@@ -941,11 +963,11 @@ function showCoachList() {
             <div class="coach-card-head">
               <div>
                 <div class="coach-card-name">${c.name}</div>
-                <div class="coach-card-style">${c.style}</div>
+                <div class="coach-card-style">${MODEL.coachStyleLabel(c)}</div>
               </div>
             </div>
             ${famBadge}
-            <div class="coach-card-note">${c.note}</div>
+            <div class="coach-card-note">${coachNote(c)}</div>
           </div>`;
       }).join('')}
     </div>
@@ -964,6 +986,9 @@ function endGame() {
 
   // If an opponent code was loaded, show the head-to-head series instead.
   if (state.challenge) { renderHeadToHead(ev); return; }
+
+  // Baseline without the coach, so we can show the coach's actual impact.
+  const baseNoCoach = state.coach ? MODEL.evaluateTeam(state.roster, null) : null;
 
   const gradeColor = MODEL.gradeColor(ev.grade);
   const arch = teamArchetype(ev, state.roster);
@@ -1058,17 +1083,21 @@ function endGame() {
         <div class="col-title">Starting Five</div>
         <div class="result-roster">
           ${ev.coach ? (() => {
-            const offSign = ev.coach.ortgMod >= 0 ? '+' : '';
-            const defSign = ev.coach.drtgMod <= 0 ? '' : '+';
-            const famStr  = ev.familiarPositions.length > 0
+            const r1 = x => Math.round(x * 10) / 10;
+            const sgn = x => (x >= 0 ? '+' : '') + r1(x);
+            const dOff = ev.ortg - baseNoCoach.ortg;       // actual fit-adjusted impact
+            const dDef = baseNoCoach.drtg - ev.drtg;       // + = better defense
+            const dWins = ev.wins - baseNoCoach.wins;
+            const v = coachFitVerdict(ev.coachFit.fitScore);
+            const famStr = ev.familiarPositions.length > 0
               ? ` · ★ ${ev.familiarPositions.join(', ')} familiar`
               : '';
             return `
               <div class="result-player coach-result-row">
                 <div class="result-pos" style="color:var(--accent2)">HC</div>
                 <div class="result-player-info">
-                  <div class="result-player-name">${ev.coach.name}</div>
-                  <div class="result-player-stats">${ev.coach.style} · OFF ${offSign}${ev.coach.ortgMod} / DEF ${defSign}${ev.coach.drtgMod}${famStr}</div>
+                  <div class="result-player-name">${ev.coach.name} <span class="coach-fit ${v.cls}">${v.label}</span></div>
+                  <div class="result-player-stats">${MODEL.coachStyleLabel(ev.coach)} · OFF ${sgn(dOff)} / DEF ${sgn(dDef)} / ${sgn(dWins)} wins${famStr}</div>
                 </div>
                 <div class="result-ws"></div>
               </div>`;
@@ -1124,6 +1153,7 @@ async function copyResultImage() {
       backgroundColor: '#0a0f09',
       scrollX: 0,
       scrollY: -window.scrollY,
+      ignoreElements: e => e.classList.contains('no-capture'),
     });
 
     canvas.toBlob(async blob => {
@@ -1368,8 +1398,10 @@ function teamArchetype(ev, roster) {
   const defenders  = players.filter(p => (p.stats.spg + p.stats.bpg) >= 2.0).length;
   const heavyBalls = players.filter(p => p.stats.ppg + 0.6 * p.stats.apg >= 24).length;
 
-  const offS = ev.sub.offense.score;
-  const defS = ev.sub.defense.score;
+  // The coach's identity nudges borderline teams toward a matching archetype.
+  const cTag = ev.coach ? (MODEL.coachTags(ev.coach)[0] || null) : null;
+  const offS = ev.sub.offense.score + (cTag === 'pace' || cTag === 'movement' ? 3 : 0);
+  const defS = ev.sub.defense.score + (cTag === 'defense' ? 4 : cTag === 'grit' ? 3 : 0);
   const balS = ev.sub.balance.score;
   const rebS = ev.sub.rebounding.score;
 
@@ -1602,10 +1634,13 @@ function buildModelExplanation(evMine, evOpp, series, myName, oppName) {
   const reason = styleReason(evW, evL, winName, losName);
   const counter = styleReason(evL, evW, losName, winName);
 
+  const coachEdgeWin = iWin ? b.coachEdge : -b.coachEdge;   // >0 = winner's coach better
   if (Math.abs(winSwing) >= 0.8 && (winSwing > 0 ? reason : counter)) {
     parts.push(winSwing > 0
       ? `The styles reinforce it: ${reason}.`
       : `Stylistically it's awkward — ${counter} — but not enough to flip the result.`);
+  } else if (coachEdgeWin >= 1.5 && evW.coach && evL.coach) {
+    parts.push(`${evW.coach.name}'s in-series adjustments tilt the back half of the series ${winName}'s way.`);
   } else if (higherName === winName && gap < 4) {
     parts.push(`Home court is the tiebreaker: ${winName === 'You' ? 'you host' : winName + ' host'} Games 1, 2, 5 and a possible 7.`);
   } else if (b.paceScale < 0.97) {
@@ -1760,9 +1795,9 @@ function buildGameByGame(evMine, evOpp, series, myName, oppName) {
     // 5. Coaching beat on the pivotal games (3/4 road swing, and a Game 7).
     const hCoach = coachOf(homeName), wCoach = coachOf(gWinnerName);
     if (n === total && total === 7 && wCoach) {
-      lines.push(`Game 7. ${wCoach.name} drew it up out of the timeout — ${wCoach.style.toLowerCase()} to the end — and ${gWinnerName} executed when it counted.`);
+      lines.push(`Game 7. ${wCoach.name} drew it up out of the timeout — ${MODEL.coachStyleLabel(wCoach).toLowerCase()} to the end — and ${gWinnerName} executed when it counted.`);
     } else if ((n === 3 || n === 4) && hCoach && rng() < 0.6) {
-      lines.push(`${hCoach.name} used the home floor to impose ${hCoach.style.toLowerCase()}, and the adjustments stuck.`);
+      lines.push(`${hCoach.name} used the home floor to impose ${MODEL.coachStyleLabel(hCoach).toLowerCase()}, and the adjustments stuck.`);
     } else if (rng() < 0.18) {
       lines.push(`Vintage ${lastName(hero.name)} — the kind of night that defined his ${decadeOf(hero)} peak.`);
     }
@@ -1830,7 +1865,7 @@ function renderHeadToHead(evMine) {
           <div class="h2h-grade" style="color:${gc}">${ev.grade}</div>
         </div>
         <div class="h2h-record">${ev.wins}–${ev.losses}</div>
-        ${ev.coach ? `<div class="h2h-coach">${ev.coach.name} · <em>${ev.coach.style}</em>${ev.familiarPositions.length > 0 ? ` · ★ ${ev.familiarPositions.join(', ')}` : ''}</div>` : ''}
+        ${ev.coach ? `<div class="h2h-coach">${ev.coach.name} · <em>${MODEL.coachStyleLabel(ev.coach)}</em>${ev.familiarPositions.length > 0 ? ` · ★ ${ev.familiarPositions.join(', ')}` : ''}</div>` : ''}
         <div class="h2h-archetype">${arch.label}</div>
         <div class="h2h-archetype-desc">${arch.desc}</div>
         <div class="h2h-ratings">
@@ -1867,7 +1902,7 @@ function renderHeadToHead(evMine) {
         ${buildModelExplanation(evMine, evOpp, series, myName, oppName)}
       </div>
 
-      <div class="series-narrative">
+      <div class="series-narrative no-capture">
         ${buildGameByGame(evMine, evOpp, series, myName, oppName)}
       </div>
 
