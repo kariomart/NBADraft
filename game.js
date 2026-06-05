@@ -43,6 +43,19 @@ const ERAS = [
 // ── Drag State ────────────────────────────────────────────────────────────────
 const drag = { type: null, playerId: null, fromPos: null };
 
+function updateMetaTags(title, description) {
+  document.title = title;
+  const set = (attr, val, content) => {
+    let el = document.querySelector(`meta[${attr}="${val}"]`);
+    if (!el) { el = document.createElement('meta'); el.setAttribute(attr, val); document.head.appendChild(el); }
+    el.content = content;
+  };
+  set('property', 'og:title', title);
+  set('property', 'og:description', description);
+  set('name', 'twitter:title', title);
+  set('name', 'twitter:description', description);
+}
+
 // ── Init ─────────────────────────────────────────────────────────────────────
 function init() {
   const params = new URLSearchParams(location.search);
@@ -60,8 +73,31 @@ function init() {
       state.ballKnowledge = !!dec.payload.b;
       state.salaryCapMode = !!dec.payload.sc;
       state.sharedResultName = dec.payload.n || '';
-      state.challenge = null;
       history.replaceState(null, '', location.pathname);
+
+      if (dec.payload.h && dec.opRoster) {
+        // H2H result — restore both teams and route through endGame → renderHeadToHead.
+        state.challenge = {
+          name: dec.payload.on || 'Opponent',
+          roster: dec.opRoster,
+          coach: dec.opCoach,
+          payload: dec.payload,
+        };
+        const me = state.sharedResultName || 'You';
+        const opp = dec.payload.on || 'Opponent';
+        updateMetaTags(
+          `${me} vs ${opp} — NBA Draft Sim`,
+          `See the full head-to-head matchup and 7-game series sim between these all-time lineups.`
+        );
+      } else {
+        state.challenge = null;
+        if (state.sharedResultName) {
+          updateMetaTags(
+            `${state.sharedResultName}'s NBA Draft Sim Results`,
+            `${state.sharedResultName} built an all-time starting five. See their grades, projected record, and lineup.`
+          );
+        }
+      }
       endGame();
       return;
     }
@@ -1198,10 +1234,38 @@ function buildResultURL(code) {
   return `${location.origin}${location.pathname}?r=${code}`;
 }
 
+// Encode both sides of a head-to-head result into a single shareable code.
+function encodeH2HResult(myRoster, myCoach, myName, oppRoster, oppCoach, oppName) {
+  const payload = {
+    v: 1, h: 1,
+    n:  (myName  || '').slice(0, 24),
+    on: (oppName || '').slice(0, 24),
+    f: state.yearFrom, t: state.yearTo,
+    e: state.selectedEras.slice(),
+    b: state.ballKnowledge ? 1 : 0,
+    sc: state.salaryCapMode ? 1 : 0,
+    p:  FILL_ORDER.map(pos => (myRoster[pos]  ? myRoster[pos].id  : 0)),
+    c:  myCoach  ? myCoach.id  : null,
+    op: FILL_ORDER.map(pos => (oppRoster[pos] ? oppRoster[pos].id : 0)),
+    oc: oppCoach ? oppCoach.id : null,
+  };
+  return b64urlEncode(JSON.stringify(payload));
+}
+
 function shareResult() {
-  const name = document.getElementById('challengerName')?.value || '';
-  const code = encodeTeam(state.roster, name);
-  const url  = buildResultURL(code);
+  let code;
+  if (state.challenge) {
+    // H2H — encode both teams.
+    const myName = document.getElementById('challengerName')?.value || state.sharedResultName || '';
+    code = encodeH2HResult(
+      state.roster, state.coach, myName,
+      state.challenge.roster, state.challenge.coach, state.challenge.name
+    );
+  } else {
+    const name = document.getElementById('challengerName')?.value || '';
+    code = encodeTeam(state.roster, name);
+  }
+  const url = buildResultURL(code);
   navigator.clipboard?.writeText(url);
   const btn = document.getElementById('shareResultBtn');
   if (btn) {
@@ -1218,7 +1282,7 @@ function extractCode(input) {
   return m ? m[1] : s;
 }
 
-// Decode a code back into { payload, roster, missing }.
+// Decode a code back into { payload, roster, missing, coach, opRoster?, opCoach? }.
 function decodeTeam(code) {
   try {
     const payload = JSON.parse(b64urlDecode(code.trim()));
@@ -1231,7 +1295,18 @@ function decodeTeam(code) {
       roster[pos] = pl;
     });
     const coach = payload.c ? (COACHES.find(c => c.id === payload.c) || null) : null;
-    return { payload, roster, missing, coach };
+
+    // H2H result — also decode the opponent team.
+    let opRoster = null, opCoach = null;
+    if (payload.h && Array.isArray(payload.op) && payload.op.length === 5) {
+      opRoster = {};
+      FILL_ORDER.forEach((pos, i) => {
+        opRoster[pos] = PLAYERS.find(p => p.id === payload.op[i]) || null;
+      });
+      opCoach = payload.oc ? (COACHES.find(c => c.id === payload.oc) || null) : null;
+    }
+
+    return { payload, roster, missing, coach, opRoster, opCoach };
   } catch (e) {
     return null;
   }
@@ -1275,18 +1350,10 @@ function applyChallenge(dec) {
 
   // Personalize the page title and OG tags with the challenger's name.
   const name = state.challenge.name;
-  const title = `${name} has challenged you — NBA Draft Sim`;
-  const desc  = `${name} has drafted their all-time starting five. Can you build a better team and win a 7-game series?`;
-  document.title = title;
-  const setMeta = (attr, val, content) => {
-    let el = document.querySelector(`meta[${attr}="${val}"]`);
-    if (!el) { el = document.createElement('meta'); el.setAttribute(attr, val); document.head.appendChild(el); }
-    el.content = content;
-  };
-  setMeta('property', 'og:title', title);
-  setMeta('property', 'og:description', desc);
-  setMeta('name', 'twitter:title', title);
-  setMeta('name', 'twitter:description', desc);
+  updateMetaTags(
+    `${name} has challenged you — NBA Draft Sim`,
+    `${name} drafted their all-time starting five. Can you build a better team and win a 7-game series?`
+  );
 }
 
 function loadChallenge() {
