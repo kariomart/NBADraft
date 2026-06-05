@@ -250,12 +250,21 @@ function rosterCapUsed() {
 }
 
 function updateCapDisplay() {
-  const el = document.getElementById('capTracker');
-  if (!el) return;
   const used = rosterCapUsed();
   const remaining = 15 - used;
-  const pct = Math.min((used / 15) * 100, 100);
   const tight = remaining <= 3;
+
+  // Header badge (replaces era info in salary cap mode)
+  const badge = document.getElementById('eraBadge');
+  if (badge && state.salaryCapMode) {
+    badge.textContent = `💰 $${remaining} left`;
+    badge.style.color = tight ? '#ef4444' : '';
+  }
+
+  // Progress bar in player list
+  const el = document.getElementById('capTracker');
+  if (!el) return;
+  const pct = Math.min((used / 15) * 100, 100);
   el.innerHTML = `
     <div class="cap-tracker-row">
       <span class="cap-tracker-label">💰 Salary Cap</span>
@@ -303,7 +312,7 @@ function renderDraftScreen() {
       <div class="draft-header">
         <button class="btn-ghost" onclick="renderSetup()">← Back</button>
         <div class="round-badge" id="roundBadge">Round ${state.round}/${state.totalRounds}</div>
-        <div class="era-badge">${state.yearFrom} – ${state.yearTo}</div>
+        <div class="era-badge" id="eraBadge">${state.salaryCapMode ? '💰 $15 left' : `${state.yearFrom} – ${state.yearTo}`}</div>
       </div>
       <div class="draft-body">
         <div class="left-panel">
