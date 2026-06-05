@@ -65,6 +65,87 @@ const MODEL = (() => {
     return REFERENCE_ENV / env;
   }
 
+  // ── Coach system: tags, fit, and in-series adjustments ──────────────────────
+  // `style` is flavor text; we derive a small set of mechanical TAGS from it
+  // (falling back to the rating mods for the legacy 'TODO' coaches), then score
+  // how well the roster FITS those tags. Same coach, different value per team.
+  const COACH_TAG_RULES = [
+    [/defens|bad boys|stopper|lockdown|no layup|grind|grit|tough|physical/i, 'defense'],
+    [/seven seconds|fast break|\bpace\b|run.?and.?gun|transition|up.?tempo|nellie|space.*flow|attack/i, 'pace'],
+    [/triangle|princeton|\bthe system\b|offensive system|motion|movement|share|unselfish|right way|ubuntu|\bflow\b|read.*react/i, 'movement'],
+    [/superstar|empower|star.?first|freedom|player.?first|player.?empower|\biso\b|isolation/i, 'empower'],
+    [/develop|teacher|young|next.?gen|culture|growth/i, 'develop'],
+    [/post|old.?school|fundamental|half.?court/i, 'grit'],
+  ];
+
+  function coachTags(coach) {
+    if (!coach) return [];
+    const hay = `${coach.style || ''} ${coach.note || ''}`;
+    const tags = [];
+    for (const [re, tag] of COACH_TAG_RULES)
+      if (re.test(hay) && !tags.includes(tag)) tags.push(tag);
+    if (tags.length) return tags.slice(0, 2);
+    // Legacy 'TODO' fallback — infer one tag from the rating profile.
+    if (coach.drtgMod <= -2) return ['defense'];
+    if (coach.ortgMod >= 3)  return ['pace'];
+    if (coach.ortgMod >= 1.5 && coach.drtgMod <= -1) return ['movement'];
+    return ['balanced'];
+  }
+
+  const TAG_LABEL = {
+    defense: 'Defensive System', pace: 'Up-Tempo Attack',
+    movement: 'Ball Movement', empower: 'Star Empowerment',
+    develop: 'Player Development', grit: 'Old-School Grit',
+    balanced: 'Balanced System',
+  };
+  // Display label — keep the real style string, but rescue the 'TODO' coaches.
+  function coachStyleLabel(coach) {
+    if (!coach) return '';
+    if (coach.style && coach.style !== 'TODO') return coach.style;
+    return TAG_LABEL[coachTags(coach)[0]] || 'Balanced System';
+  }
+
+  // Overall coach quality (total point swing) → drives the in-series adjustment
+  // edge. drtgMod is negative-good, so ortgMod − drtgMod = net points added.
+  function coachStrength(coach) {
+    return coach ? coach.ortgMod - coach.drtgMod : 0;
+  }
+
+  // Roster-fit adjustment. `sig` carries centered roster signals so an average
+  // roster nets ~0 — the bonus/penalty is the DEVIATION based on construction.
+  // Returns { o, d, fitScore, tags } where o adds to ORTG, d adds to DRTG
+  // (negative d = better defense); fitScore is a signed "how well it fits".
+  function coachAdjust(coach, sig) {
+    const tags = coachTags(coach);
+    const hasAlpha = sig.maxPER >= 24;
+    let o = 0, defImprove = 0;
+
+    for (const tag of tags) {
+      if (tag === 'movement') {
+        o += clamp(sig.pass * 0.10 + sig.shoot * 0.40
+                   - clamp(sig.ballHog - 2, 0, 4) * 0.35, -2.0, 3.0);
+      } else if (tag === 'pace') {
+        o += clamp(sig.shoot * 0.60 + sig.transition * 0.50, -2.0, 3.0);
+      } else if (tag === 'defense') {
+        defImprove += clamp((sig.defPersonnel - 1.0) * 0.60, -2.0, 3.0);
+        o -= 0.4;
+      } else if (tag === 'empower') {
+        o += hasAlpha
+          ? clamp(1.0 + (sig.maxPER - 24) * 0.15 + clamp(sig.ballHog, 0, 5) * 0.15, 0, 2.8)
+          : -1.4;
+      } else if (tag === 'develop') {
+        o += clamp(sig.raw * 0.45, 0, 2.5);
+        defImprove += clamp(sig.raw * 0.25, 0, 1.5);
+      } else if (tag === 'grit') {
+        defImprove += clamp((sig.defPersonnel - 1.0) * 0.35 + sig.reb * 0.06, -1.5, 2.5);
+        o -= 0.4;
+      } else {  // balanced
+        o += 0.3; defImprove += 0.3;
+      }
+    }
+    return { o: round1(o), d: round1(-defImprove), fitScore: round1(o + defImprove), tags };
+  }
+
   // ── Main entry point ───────────────────────────────────────────────────────
   function evaluateTeam(roster, coach = null) {
     const slots = ['PG', 'SG', 'SF', 'PF', 'C'];
@@ -135,24 +216,43 @@ const MODEL = (() => {
       (centerP.stats.rpg < 7 && centerP.stats.bpg < 1.0) ? 1.5 : 0.0;
 
     // ── Coach modifiers ─────────────────────────────────────────────────────────
+    // Centered roster signals the coach-fit math reads (avg roster → ~0).
+    const sig = {
+      shoot: spacers - 3,
+      pass: sumAPG - LEAGUE.sumAPG,
+      ballHog: usageClash,
+      maxPER,
+      defPersonnel: rimBonus + defStarBonus
+        + (sumBPG - LEAGUE.sumBPG) * 0.30 + (sumSPG - LEAGUE.sumSPG) * 0.30,
+      raw: Math.max(0, LEAGUE.PER - avgPER),
+      transition: sumSPG - LEAGUE.sumSPG,
+      reb: sumRPG - LEAGUE.sumRPG,
+    };
+
     // Familiar players: those who played for this coach's team during a tenure.
-    // Each familiar player adds a small bonus (knowledge of the system).
+    // Weighted by how long they shared it and whether they're a star (deeper
+    // system mastery), instead of a flat per-player bump.
     const familiarPositions = [];
+    let famScore = 0;
     if (coach) {
       lineup.forEach(l => {
         if (l.player === REPLACEMENT) return;
         const p = l.player;
-        const familiar = coach.tenures.some(t =>
-          p.team === t.team &&
-          p.from <= t.to &&
-          p.to >= t.from
-        );
-        if (familiar) familiarPositions.push(l.pos);
+        const t = coach.tenures.find(t =>
+          p.team === t.team && p.from <= t.to && p.to >= t.from);
+        if (!t) return;
+        familiarPositions.push(l.pos);
+        const overlap = Math.min(p.to, t.to) - Math.max(p.from, t.from) + 1;
+        const star = p.per >= 20 ? 1.15 : 1.0;
+        famScore += clamp((0.30 + overlap * 0.05) * star, 0.30, 0.75);
       });
     }
-    const famCount   = Math.min(familiarPositions.length, 3);
-    const coachOrtg  = coach ? coach.ortgMod + famCount * 0.4 : 0;
-    const coachDrtg  = coach ? coach.drtgMod - famCount * 0.3 : 0;
+    famScore = clamp(famScore, 0, 2.2);
+
+    const cFit = coach ? coachAdjust(coach, sig)
+                       : { o: 0, d: 0, fitScore: 0, tags: [] };
+    const coachOrtg = coach ? coach.ortgMod + famScore + cFit.o : 0;
+    const coachDrtg = coach ? coach.drtgMod - famScore * 0.6 + cFit.d : 0;
 
     // ── Offensive Rating ────────────────────────────────────────────────────────
     const ortg = LEAGUE.ORTG
@@ -229,6 +329,7 @@ const MODEL = (() => {
     const report = buildReport({
       sub, spacers, rimBonus, defStarBonus, usageClash,
       maxPER, twoWay, smallBallPenalty,
+      coachFit: coach ? cFit : null,
     });
 
     // ── Head-to-head matchup fingerprint ─────────────────────────────────────────
@@ -274,6 +375,7 @@ const MODEL = (() => {
       bestPlayer: contributions.slice().sort((a, b) => b.ws - a.ws)[0],
       coach: coach || null,
       familiarPositions,
+      coachFit: cFit,
       profile,
     };
   }
@@ -304,6 +406,12 @@ const MODEL = (() => {
     if (c.spacers <= 2) neg.push('Cramped spacing — not enough shooting');
     if (c.usageClash >= 3) neg.push('Too many ball-dominant scorers competing for touches');
     if (c.smallBallPenalty > 0) neg.push('Undersized in the middle');
+
+    if (c.coachFit) {
+      if (c.coachFit.fitScore >= 1.6) pos.push("Coach's system is a perfect fit for this roster");
+      else if (c.coachFit.fitScore >= 0.7) pos.push("Coach's scheme suits the personnel");
+      else if (c.coachFit.fitScore <= -1.2) neg.push("Roster doesn't fit the coach's style");
+    }
 
     if (!pos.length) pos.push('A balanced, no-frills starting five');
     return { strengths: pos, weaknesses: neg };
@@ -412,8 +520,17 @@ const MODEL = (() => {
     const aIsHigh = margin >= 0;
     const m = Math.abs(margin);                                  // higher seed margin
     const HOME = [true, true, false, false, true, false, true];  // higher seed home?
-    const pHighByGame = HOME.map(home =>
-      clamp(normCdf((m + (home ? HCA : -HCA)) / SD), 0.02, 0.98));
+
+    // ── Coaching: in-series adjustments edge ────────────────────────────────
+    // The stronger in-series adjuster out-schemes the opponent as a 7-game set
+    // wears on — applied only to Games 4+, where adjustments compound. This is
+    // ON TOP of the season-long coach effect already baked into net rating.
+    const coachEdgeA = coachStrength(evA.coach) - coachStrength(evB.coach);
+    const coachHi = (aIsHigh ? coachEdgeA : -coachEdgeA);        // >0 favors higher seed
+    const pHighByGame = HOME.map((home, gi) => {
+      const adj = gi >= 3 ? clamp(coachHi * 0.35, -2.2, 2.2) : 0;
+      return clamp(normCdf((m + (home ? HCA : -HCA) + adj) / SD), 0.02, 0.98);
+    });
 
     const d  = seriesDist(pHighByGame);
     const dA = aIsHigh ? d.high : d.low;     // A's win-in-N distribution
@@ -452,6 +569,7 @@ const MODEL = (() => {
         styleSwing: round1(styleA - styleB), // +favors A from the matchup
         paceScale:  round1(paceScale),    // <1 compresses, >1 widens
         margin:     round1(margin),       // final neutral-site margin (A)
+        coachEdge:  round1(coachEdgeA),   // +favors A in the series' back half
       },
     };
   }
@@ -479,5 +597,6 @@ const MODEL = (() => {
     return '#ef4444';
   }
 
-  return { evaluateTeam, simulateSeries, gradeColor, scoreToGrade };
+  return { evaluateTeam, simulateSeries, gradeColor, scoreToGrade,
+           coachTags, coachStyleLabel };
 })();

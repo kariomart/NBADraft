@@ -1247,6 +1247,23 @@ input, select { font-family: inherit; }
 }
 .explainer-body strong { color: var(--text); }
 
+/* ── Coach fit badge ────────────────────────────────────────────────────────── */
+.coach-fit {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  vertical-align: middle;
+  margin-left: 4px;
+}
+.coach-fit.fit-great { color: #052e16; background: var(--green); }
+.coach-fit.fit-good  { color: #14260a; background: #84cc16; }
+.coach-fit.fit-mid   { color: #3a2e05; background: #eab308; }
+.coach-fit.fit-bad   { color: #fff;     background: #ef4444; }
+
 /* ── Game-by-game recap ─────────────────────────────────────────────────────── */
 .series-recap { display: flex; flex-direction: column; gap: 10px; }
 .recap-intro {
