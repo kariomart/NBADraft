@@ -772,6 +772,14 @@ input, select { font-family: inherit; }
   cursor: grabbing;
 }
 
+/* Tap-selected slot (mobile swap) */
+.court-slot.slot-selected {
+  border-color: #fbbf24 !important;
+  border-style: solid !important;
+  background: rgba(251, 191, 36, 0.2) !important;
+  box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.25);
+}
+
 /* Position layout (% of court) */
 .slot-c  { top: 8%; left: calc(50% - 78px); }
 .slot-pf { top: 8%; left: calc(50% + 8px); }
@@ -1111,6 +1119,20 @@ input, select { font-family: inherit; }
   padding: 2px 0;
 }
 .share-altcopy:hover { color: var(--text); }
+
+.share-result-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+.share-result-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-weight: 600;
+  white-space: nowrap;
+}
 
 .mode-toggle.locked { opacity: 0.7; cursor: default; }
 

@@ -23,6 +23,8 @@ const state = {
   selectedEras: [],       // multi-select era tags driving yearFrom/yearTo
   challenge: null,        // an opponent team loaded from a challenge code
   coach: null,            // selected after the roster is full
+  sharedResultName: '',   // name from a ?r= result link being viewed
+  selectedSlot: null,     // court slot selected via tap (mobile swap UX)
 };
 
 const FILL_ORDER = ['PG', 'SG', 'SF', 'PF', 'C'];
@@ -43,13 +45,34 @@ const drag = { type: null, playerId: null, fromPos: null };
 
 // ── Init ─────────────────────────────────────────────────────────────────────
 function init() {
-  // Auto-load a challenge if the page was opened from a share link (?c=…).
-  const code = new URLSearchParams(location.search).get('c');
-  if (code) {
-    const dec = decodeTeam(code);
+  const params = new URLSearchParams(location.search);
+
+  // ?r= → load a shared result directly (no draft needed).
+  const resultCode = params.get('r');
+  if (resultCode) {
+    const dec = decodeTeam(resultCode);
+    if (dec) {
+      state.roster = dec.roster;
+      state.coach = dec.coach;
+      state.yearFrom = dec.payload.f;
+      state.yearTo = dec.payload.t;
+      state.selectedEras = Array.isArray(dec.payload.e) ? dec.payload.e : [];
+      state.ballKnowledge = !!dec.payload.b;
+      state.salaryCapMode = !!dec.payload.sc;
+      state.sharedResultName = dec.payload.n || '';
+      state.challenge = null;
+      history.replaceState(null, '', location.pathname);
+      endGame();
+      return;
+    }
+  }
+
+  // ?c= → load a challenge from a friend.
+  const challengeCode = params.get('c');
+  if (challengeCode) {
+    const dec = decodeTeam(challengeCode);
     if (dec) {
       applyChallenge(dec);
-      // Clean the URL so a refresh/re-share doesn't re-trigger or grow.
       history.replaceState(null, '', location.pathname);
     }
   }
@@ -64,10 +87,7 @@ function renderSetup() {
 
   app.innerHTML = `
     <div class="setup-screen">
-      <div class="logo">🏀 NBA Draft Sim</div>
-      <h1>Build Your All-Time Team</h1>
-      <p class="subtitle">Set your era, spin for teams, draft players, get a record.</p>
-
+      <div class="logo">NBA Draft Sim</div>
       ${locked ? `
       <div class="challenge-banner">
         <div class="challenge-banner-main">⚔️ Challenge from <strong>${state.challenge.name}</strong></div>
@@ -91,6 +111,7 @@ function renderSetup() {
         ${ERAS.map(e => `<button class="preset-btn ${state.selectedEras.includes(e.key) ? 'active' : ''}" ${locked ? '' : `onclick="toggleEra('${e.key}')"`}>${e.label}</button>`).join('')}
       </div>
 
+      
       <button class="mode-toggle ${state.ballKnowledge ? 'on' : ''} ${locked ? 'locked' : ''}" id="bkToggle" ${locked ? '' : 'onclick="toggleBallKnowledge()"'}>
         <span class="mode-toggle-switch"><span class="mode-toggle-knob"></span></span>
         <span class="mode-toggle-text">
@@ -107,8 +128,6 @@ function renderSetup() {
         </span>
       </button>
 
-      <button class="btn-primary" onclick="startGame()">${locked ? `Draft vs ${state.challenge.name}` : 'Start Draft'}</button>
-
       ${locked ? '' : `
       <div class="challenge-entry">
         <div class="challenge-entry-title">⚔️ Got a challenge code?</div>
@@ -118,7 +137,10 @@ function renderSetup() {
         </div>
         <div class="challenge-error" id="challengeError"></div>
       </div>`}
+      <button class="btn-primary" onclick="startGame()">${locked ? `Draft vs ${state.challenge.name}` : 'Start Draft'}</button>
     </div>
+
+    
   `;
   // Manually editing a year is a custom range — drop any selected era tags.
   document.getElementById('yearFrom').addEventListener('change', e => {
@@ -232,6 +254,8 @@ function startGame() {
   state.draftHistory = [];
   state.coachOptions = [];
   state.sameTeamsChallenge = false;
+  state.sharedResultName = '';
+  state.selectedSlot = null;
   renderDraftScreen();
   spinWheel();
 }
@@ -305,6 +329,7 @@ function renderCourtSlots() {
 
   return slots.map(slot => {
     const p = state.roster[slot.id];
+    const isSelected = state.selectedSlot === slot.id;
     const dragAttrs = p
       ? `draggable="true" ondragstart="onSlotDragStart(event,'${slot.id}')" ondragend="onDragEnd(event)"`
       : '';
@@ -313,9 +338,10 @@ function renderCourtSlots() {
       : `<div class="slot-pos-label">${slot.id}</div>`;
 
     return `
-      <div class="court-slot ${slot.cls} ${p ? 'filled' : 'empty'}"
+      <div class="court-slot ${slot.cls} ${p ? 'filled' : 'empty'} ${isSelected ? 'slot-selected' : ''}"
            data-pos="${slot.id}"
            ${dragAttrs}
+           onclick="onSlotClick('${slot.id}')"
            ondragover="onSlotDragOver(event,'${slot.id}')"
            ondrop="onSlotDrop(event,'${slot.id}')"
            ondragleave="onSlotDragLeave(event)">
@@ -328,6 +354,45 @@ function renderCourtSlots() {
 function updateCourt() {
   const court = document.getElementById('court');
   if (court) court.innerHTML = renderCourtSlots();
+}
+
+// Tap-based slot interaction (mobile swap / move).
+function onSlotClick(pos) {
+  // Ignore if a drag just ended — dragend fires before click on desktop.
+  if (drag.type !== null) return;
+
+  const player = state.roster[pos];
+
+  if (!state.selectedSlot) {
+    if (player) { state.selectedSlot = pos; updateCourt(); }
+    return;
+  }
+
+  const fromPos    = state.selectedSlot;
+  const fromPlayer = state.roster[fromPos];
+
+  state.selectedSlot = null;
+
+  if (fromPos === pos) { updateCourt(); return; } // deselect
+
+  if (!player) {
+    // Move to empty slot if eligible.
+    if (fromPlayer.positions.includes(pos)) {
+      state.roster[fromPos] = null;
+      state.roster[pos] = fromPlayer;
+    } else {
+      flashInvalid(pos);
+    }
+  } else {
+    // Swap if both players are eligible for each other's slot.
+    if (player.positions.includes(fromPos) && fromPlayer.positions.includes(pos)) {
+      state.roster[fromPos] = player;
+      state.roster[pos] = fromPlayer;
+    } else {
+      flashInvalid(pos);
+    }
+  }
+  updateCourt();
 }
 
 // ── Drag: from player list ────────────────────────────────────────────────────
@@ -944,7 +1009,7 @@ function endGame() {
     <div class="result-screen">
       <div class="result-hero">
         <div class="hero-left">
-          <h1>Your Team</h1>
+          <h1>${state.sharedResultName ? `${state.sharedResultName}'s Team` : 'Your Team'}</h1>
           <div class="result-archetype">${arch.label}</div>
           <div class="result-archetype-desc">${arch.desc}</div>
           <div class="record-badge">
@@ -1014,12 +1079,17 @@ function endGame() {
             <span class="mode-toggle-sub">Opponent gets the exact same teams & eras you drafted from</span>
           </span>
         </button>
-        <input id="challengerName" class="share-name" placeholder="Your name (optional)" maxlength="24" oninput="refreshShareCode()">
+        <input id="challengerName" class="share-name" placeholder="Your name (optional)" maxlength="24" oninput="refreshShareCode();refreshResultCode()">
         <div class="share-code-row">
           <input id="shareLink" class="share-code" readonly value="${buildShareURL(shareCode)}">
           <button class="btn-ghost" id="copyLinkBtn" onclick="copyShare('link')">Copy Link</button>
         </div>
         <button class="share-altcopy" id="copyCodeBtn" onclick="copyShare('code')">Copy raw code instead</button>
+        <div class="share-result-row">
+          <span class="share-result-label">🔗 Share your result</span>
+          <input id="shareResultLink" class="share-code" readonly value="${buildResultURL(shareCode)}">
+          <button class="btn-ghost" id="shareResultBtn" onclick="shareResult()">Copy</button>
+        </div>
       </div>
 
       <div class="result-actions">
@@ -1051,16 +1121,31 @@ async function copyResultImage() {
     });
 
     canvas.toBlob(async blob => {
-      try {
-        await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-        btn.textContent = 'Copied!';
-      } catch {
-        // Clipboard API blocked — fall back to download
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = 'nba-draft-result.png';
-        a.click();
-        btn.textContent = 'Downloaded!';
+      const file = new File([blob], 'nba-draft-result.png', { type: 'image/png' });
+
+      // Web Share API — works natively on iOS/Android (share sheet).
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        try {
+          await navigator.share({ files: [file], title: 'NBA Draft Sim' });
+          btn.textContent = 'Shared!';
+        } catch {
+          // User cancelled share sheet — just reset quietly.
+          btn.textContent = orig;
+          btn.disabled = false;
+          return;
+        }
+      } else {
+        // Desktop: try clipboard, fall back to download.
+        try {
+          await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+          btn.textContent = 'Copied!';
+        } catch {
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = 'nba-draft-result.png';
+          a.click();
+          btn.textContent = 'Downloaded!';
+        }
       }
       setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 2000);
     }, 'image/png');
@@ -1112,6 +1197,24 @@ function buildShareURL(code) {
   return `${location.origin}${location.pathname}?c=${code}`;
 }
 
+// Result link — loads straight to the result screen, no draft required.
+function buildResultURL(code) {
+  return `${location.origin}${location.pathname}?r=${code}`;
+}
+
+function shareResult() {
+  const name = document.getElementById('challengerName')?.value || '';
+  const code = encodeTeam(state.roster, name);
+  const url  = buildResultURL(code);
+  navigator.clipboard?.writeText(url);
+  const btn = document.getElementById('shareResultBtn');
+  if (btn) {
+    const orig = btn.textContent;
+    btn.textContent = 'Copied!';
+    setTimeout(() => { btn.textContent = orig; }, 1500);
+  }
+}
+
 // Accept either a raw code or a pasted share link, and return the code.
 function extractCode(input) {
   const s = (input || '').trim();
@@ -1142,6 +1245,13 @@ function refreshShareCode() {
   const name = document.getElementById('challengerName').value;
   const code = encodeTeam(state.roster, name);
   document.getElementById('shareLink').value = buildShareURL(code);
+}
+
+function refreshResultCode() {
+  const name = document.getElementById('challengerName').value;
+  const code = encodeTeam(state.roster, name);
+  const el = document.getElementById('shareResultLink');
+  if (el) el.value = buildResultURL(code);
 }
 
 // kind: 'link' (full URL) or 'code' (raw code only)
