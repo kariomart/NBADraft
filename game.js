@@ -234,11 +234,25 @@ function toggleSalaryCap() {
 }
 
 // PER-based salary tiers: $5 elite → $1 fringe
+// Player price ($1–$5) for salary-cap mode. A composite "star value" that blends
+// efficiency (PER, WS/48, TS) with scoring volume (PPG) and all-around production
+// (AST/REB/STL/BLK) — mirroring what the team model actually rewards. Pure PER
+// badly undervalued high-volume perimeter scorers (Kobe graded out at $4 despite
+// 25 a night); the PPG term fixes that without inflating one-dimensional bigs.
 function playerSalary(player) {
-  if (player.per >= 26) return 5;
-  if (player.per >= 21) return 4;
-  if (player.per >= 17) return 3;
-  if (player.per >= 13) return 2;
+  const s = player.stats || {};
+  const v = 0.80 * (player.per  || 0)
+          + 40   * (player.ws48 || 0)
+          + 0.58 * (s.ppg || 0)
+          + 0.38 * (s.apg || 0)
+          + 0.13 * (s.rpg || 0)
+          + 1.4  * (s.spg || 0)
+          + 1.4  * (s.bpg || 0)
+          + 0.10 * ((player.ts ?? 53) - 53);
+  if (v >= 44) return 5;
+  if (v >= 38) return 4;
+  if (v >= 31) return 3;
+  if (v >= 23) return 2;
   return 1;
 }
 
